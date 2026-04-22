@@ -117,6 +117,7 @@ create table if not exists public.bills_monthly (
   user_id uuid references auth.users(id) on delete cascade,
   month text not null check (month ~ '^[0-9]{4}-[0-9]{2}$'),
   template_id uuid references public.bill_templates(id) on delete set null,
+  recurrence_id uuid, -- link bills across months (no templates needed)
   name text not null,
   account_id uuid references public.accounts(id) on delete set null,
   due_date date,
@@ -124,7 +125,20 @@ create table if not exists public.bills_monthly (
   paid boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint bills_monthly_user_month_template_unique unique (user_id, month, template_id)
+  constraint bills_monthly_user_month_template_unique unique (user_id, month, template_id),
+  constraint bills_monthly_user_month_recurrence_unique unique (user_id, month, recurrence_id)
+);
+
+-- Month-scoped category settings (e.g. hide category for a specific month)
+create table if not exists public.category_month_settings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,
+  month text not null check (month ~ '^[0-9]{4}-[0-9]{2}$'),
+  category_id uuid not null references public.categories(id) on delete cascade,
+  hidden boolean not null default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint category_month_settings_user_month_category_unique unique (user_id, month, category_id)
 );
 
 -- ============================================================
@@ -135,6 +149,8 @@ create index if not exists idx_transactions_user_account on public.transactions(
 create index if not exists idx_transactions_user_from_to on public.transactions(user_id, from_account_id, to_account_id);
 create index if not exists idx_budgets_user_month on public.budgets(user_id, month);
 create index if not exists idx_bills_monthly_user_month on public.bills_monthly(user_id, month);
+create index if not exists idx_bills_monthly_user_recurrence on public.bills_monthly(user_id, recurrence_id);
+create index if not exists idx_category_month_settings_user_month on public.category_month_settings(user_id, month);
 
 -- ============================================================
 -- updated_at trigger
@@ -185,6 +201,12 @@ do $$ begin
 exception when duplicate_object then null;
 end $$;
 
+do $$ begin
+  create trigger trg_category_month_settings_updated_at before update on public.category_month_settings
+  for each row execute procedure public.set_updated_at();
+exception when duplicate_object then null;
+end $$;
+
 -- ============================================================
 -- RLS
 -- ============================================================
@@ -194,6 +216,7 @@ alter table public.budgets enable row level security;
 alter table public.transactions enable row level security;
 alter table public.bill_templates enable row level security;
 alter table public.bills_monthly enable row level security;
+alter table public.category_month_settings enable row level security;
 
 -- "Defaults" rows (user_id is NULL) are readable by any authenticated user.
 -- Users can read their own rows and can write only their own rows.
@@ -367,6 +390,35 @@ end $$;
 
 do $$ begin
   create policy bills_monthly_delete on public.bills_monthly
+  for delete to authenticated
+  using (user_id = auth.uid());
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create policy category_month_settings_select on public.category_month_settings
+  for select to authenticated
+  using (user_id = auth.uid());
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create policy category_month_settings_insert on public.category_month_settings
+  for insert to authenticated
+  with check (user_id = auth.uid());
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create policy category_month_settings_update on public.category_month_settings
+  for update to authenticated
+  using (user_id = auth.uid())
+  with check (user_id = auth.uid());
+exception when duplicate_object then null;
+end $$;
+
+do $$ begin
+  create policy category_month_settings_delete on public.category_month_settings
   for delete to authenticated
   using (user_id = auth.uid());
 exception when duplicate_object then null;

@@ -26,10 +26,18 @@ type BudgetRow = {
   amount: number;
 };
 
+type CategoryMonthSettingRow = {
+  id: string;
+  month: string; // YYYY-MM
+  category_id: string;
+  hidden: boolean;
+};
+
 type BillMonthlyRow = {
   id: string;
   month: string;
   template_id: string | null;
+  recurrence_id: string | null;
   name: string;
   account_id: string | null;
   due_date: string | null; // yyyy-mm-dd
@@ -360,9 +368,25 @@ export default function Home() {
   const [year, setYear] = useState(2026);
   const monthKey = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
 
+  const clampDueDateForMonth = (mKey: string, dueDay: number) => {
+    const yyyy = Number(mKey.slice(0, 4));
+    const mm = Number(mKey.slice(5, 7));
+    const daysInMonth = new Date(yyyy, mm, 0).getDate();
+    const d = Math.max(1, Math.min(daysInMonth, dueDay));
+    return `${mKey}-${String(d).padStart(2, "0")}`;
+  };
+
+  const addMonthsToKey = (mKey: string, deltaMonths: number) => {
+    const yyyy = Number(mKey.slice(0, 4));
+    const mm = Number(mKey.slice(5, 7));
+    const dt = new Date(yyyy, mm - 1 + deltaMonths, 1);
+    return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}`;
+  };
+
   const [accounts, setAccounts] = useState<AccountRow[]>([]);
   const [categories, setCategories] = useState<CategoryRow[]>([]);
   const [budgets, setBudgets] = useState<BudgetRow[]>([]);
+  const [categoryMonthSettings, setCategoryMonthSettings] = useState<CategoryMonthSettingRow[]>([]);
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [billsMonthly, setBillsMonthly] = useState<BillMonthlyRow[]>([]);
 
@@ -804,15 +828,28 @@ export default function Home() {
     name: "",
     monthly_budget: "",
   });
+  const [categoryBadgeMode, setCategoryBadgeMode] = useState<"preset" | "custom">("preset");
+  const presetBadges = useMemo(
+    () =>
+      EXPENSE_CATEGORY_ORDER.map((name) => ({
+        name,
+        color: EXPENSE_CATEGORY_COLORS[name],
+      })),
+    [],
+  );
   const [categoryEditOpen, setCategoryEditOpen] = useState(false);
   const [categoryEditSaving, setCategoryEditSaving] = useState(false);
   const [categoryEditId, setCategoryEditId] = useState<string | null>(null);
   const [categoryEditName, setCategoryEditName] = useState("");
   const [categoryEditBudgetRaw, setCategoryEditBudgetRaw] = useState("");
+  const [categoryApplyConfirmOpen, setCategoryApplyConfirmOpen] = useState(false);
+  const [categoryDeleteConfirmOpen, setCategoryDeleteConfirmOpen] = useState(false);
+  const [categoryConfirmBusy, setCategoryConfirmBusy] = useState(false);
 
   const openCategory = () => {
     setAuthError(null);
     setCategoryDraft({ name: "", monthly_budget: "" });
+    setCategoryBadgeMode("preset");
     setCategoryOpen(true);
   };
 
@@ -880,6 +917,11 @@ export default function Home() {
   };
 
   const saveCategoryEdit = async () => {
+    // confirm modal (this month only vs all future) will call the actual save.
+    setCategoryApplyConfirmOpen(true);
+  };
+
+  const saveCategoryEditWithConfirm = async ({ applyToFuture }: { applyToFuture: boolean }) => {
     if (!session?.user?.id) return;
     if (!supabase) return;
     if (!categoryEditId) return;
@@ -890,16 +932,6 @@ export default function Home() {
       if (!nextName) throw new Error("Name cannot be empty");
       const budgetAmount = Number.parseFloat(categoryEditBudgetRaw.replace(/[฿,]/g, ""));
       if (!Number.isFinite(budgetAmount) || budgetAmount < 0) throw new Error("Monthly budget must be 0 or more");
-
-      const { data, error } = await supabase
-        .from("categories")
-        .update({ name: nextName })
-        .eq("id", categoryEditId)
-        .eq("user_id", session.user.id)
-        .select("id,name,color,kind,archived")
-        .single();
-      if (error) throw error;
-      setCategories((prev) => prev.map((c) => (c.id === categoryEditId ? (data as CategoryRow) : c)));
 
       const budgetPayload = {
         user_id: session.user.id,
@@ -920,11 +952,95 @@ export default function Home() {
         return prev.map((b, i) => (i === idx ? row : b));
       });
 
+      if (applyToFuture) {
+        // Update the category name globally, and propagate budgets to future months.
+        const { data, error } = await supabase
+          .from("categories")
+          .update({ name: nextName })
+          .eq("id", categoryEditId)
+          .eq("user_id", session.user.id)
+          .select("id,name,color,kind,archived")
+          .single();
+        if (error) throw error;
+        setCategories((prev) => prev.map((c) => (c.id === categoryEditId ? (data as CategoryRow) : c)));
+
+        const months: string[] = [];
+        for (let i = 1; i <= 24; i++) months.push(addMonthsToKey(monthKey, i));
+        if (months.length) {
+          const rows = months.map((m) => ({
+            user_id: session.user.id,
+            month: m,
+            category_id: categoryEditId,
+            amount: budgetAmount,
+          }));
+          const { error: upErr } = await supabase.from("budgets").upsert(rows as any, { onConflict: "user_id,month,category_id" });
+          if (upErr) throw upErr;
+          // Optimistically update local state for months we've touched (even if not currently visible).
+        }
+      }
+
       setCategoryEditOpen(false);
     } catch (e) {
       setAuthError(e instanceof Error ? e.message : "Failed to update category");
     } finally {
       setCategoryEditSaving(false);
+    }
+  };
+
+  const hideCategoryForMonth = async ({ id, mKey }: { id: string; mKey: string }) => {
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+    setAuthError(null);
+    setCategoryConfirmBusy(true);
+    try {
+      const payload = { user_id: session.user.id, month: mKey, category_id: id, hidden: true };
+      const { data, error } = await supabase
+        .from("category_month_settings")
+        .upsert(payload as any, { onConflict: "user_id,month,category_id" })
+        .select("id,month,category_id,hidden")
+        .single();
+      if (error) throw error;
+      setCategoryMonthSettings((prev) => {
+        const row = data as CategoryMonthSettingRow;
+        const idx = prev.findIndex((r) => r.month === row.month && r.category_id === row.category_id);
+        if (idx === -1) return [...prev, row];
+        return prev.map((r, i) => (i === idx ? row : r));
+      });
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Failed to delete category");
+    } finally {
+      setCategoryConfirmBusy(false);
+    }
+  };
+
+  const hideCategoryAllFutureMonths = async ({ id }: { id: string }) => {
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+    setAuthError(null);
+    setCategoryConfirmBusy(true);
+    try {
+      const months: string[] = [monthKey];
+      for (let i = 1; i <= 24; i++) months.push(addMonthsToKey(monthKey, i));
+      const rows = months.map((m) => ({ user_id: session.user.id, month: m, category_id: id, hidden: true }));
+      const { data, error } = await supabase
+        .from("category_month_settings")
+        .upsert(rows as any, { onConflict: "user_id,month,category_id" })
+        .select("id,month,category_id,hidden");
+      if (error) throw error;
+      const list = (data ?? []) as CategoryMonthSettingRow[];
+      setCategoryMonthSettings((prev) => {
+        const next = [...prev];
+        list.forEach((row) => {
+          const idx = next.findIndex((r) => r.month === row.month && r.category_id === row.category_id);
+          if (idx === -1) next.push(row);
+          else next[idx] = row;
+        });
+        return next;
+      });
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Failed to delete category");
+    } finally {
+      setCategoryConfirmBusy(false);
     }
   };
 
@@ -1042,6 +1158,9 @@ export default function Home() {
   const [billSaving, setBillSaving] = useState(false);
   const [billCalendarOpen, setBillCalendarOpen] = useState(false);
   const [billEditingId, setBillEditingId] = useState<string | null>(null);
+  const [billConfirmOpen, setBillConfirmOpen] = useState(false);
+  const [billConfirmMode, setBillConfirmMode] = useState<"create" | "edit">("create");
+  const [billDeleteConfirmOpen, setBillDeleteConfirmOpen] = useState(false);
   const [billDraft, setBillDraft] = useState<{
     name: string;
     account_id: string;
@@ -1055,7 +1174,7 @@ export default function Home() {
     setBillEditingId(null);
     setBillDraft({
       name: "",
-      account_id: accounts[0]?.id ?? "",
+      account_id: "",
       due_date: monthDefaultDate,
       amount: "",
       paid: false,
@@ -1069,7 +1188,7 @@ export default function Home() {
     setBillEditingId(b.id);
     setBillDraft({
       name: b.name,
-      account_id: b.account_id ?? (accounts[0]?.id ?? ""),
+      account_id: "",
       due_date: b.due_date ?? monthDefaultDate,
       amount: String(b.amount),
       paid: b.paid,
@@ -1087,7 +1206,6 @@ export default function Home() {
       const amount = Number.parseFloat(billDraft.amount.replace(/[฿,]/g, ""));
       if (!billDraft.name.trim()) throw new Error("Please enter a bill name");
       if (!billDraft.due_date) throw new Error("Please select a due date");
-      if (!billDraft.account_id) throw new Error("Please select an account");
       if (!Number.isFinite(amount) || amount <= 0) throw new Error("Amount must be greater than 0");
 
       if (!billEditingId) {
@@ -1096,7 +1214,7 @@ export default function Home() {
           month: monthKey,
           template_id: null,
           name: billDraft.name.trim(),
-          account_id: billDraft.account_id,
+          account_id: null,
           due_date: billDraft.due_date,
           amount,
           paid: billDraft.paid,
@@ -1104,14 +1222,14 @@ export default function Home() {
         const { data, error } = await supabase
           .from("bills_monthly")
           .insert(payload)
-          .select("id,month,template_id,name,account_id,due_date,amount,paid")
+          .select("id,month,template_id,recurrence_id,name,account_id,due_date,amount,paid")
           .single();
         if (error) throw error;
         setBillsMonthly((prev) => [...prev, data as BillMonthlyRow].sort((a, b) => (a.due_date ?? "").localeCompare(b.due_date ?? "")));
       } else {
         const payload = {
           name: billDraft.name.trim(),
-          account_id: billDraft.account_id,
+          account_id: null,
           due_date: billDraft.due_date,
           amount,
           paid: billDraft.paid,
@@ -1121,9 +1239,136 @@ export default function Home() {
           .update(payload)
           .eq("id", billEditingId)
           .eq("user_id", session.user.id)
-          .select("id,month,template_id,name,account_id,due_date,amount,paid")
+          .select("id,month,template_id,recurrence_id,name,account_id,due_date,amount,paid")
           .single();
         if (error) throw error;
+        setBillsMonthly((prev) =>
+          prev
+            .map((x) => (x.id === billEditingId ? (data as BillMonthlyRow) : x))
+            .sort((a, b) => (a.due_date ?? "").localeCompare(b.due_date ?? "")),
+        );
+      }
+
+      setBillOpen(false);
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Failed to save bill");
+    } finally {
+      setBillSaving(false);
+    }
+  };
+
+  const saveBillWithConfirm = async (opts: { repeat: boolean; applyToFuture: boolean }) => {
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+    setAuthError(null);
+    setBillSaving(true);
+    try {
+      const amount = Number.parseFloat(billDraft.amount.replace(/[฿,]/g, ""));
+      if (!billDraft.name.trim()) throw new Error("Please enter a bill name");
+      if (!billDraft.due_date) throw new Error("Please select a due date");
+      if (!Number.isFinite(amount) || amount <= 0) throw new Error("Amount must be greater than 0");
+
+      const dueDay = Number(billDraft.due_date.slice(-2));
+      const recurrenceId =
+        opts.repeat || opts.applyToFuture
+          ? (typeof crypto !== "undefined" && "randomUUID" in crypto
+              ? (crypto.randomUUID() as string)
+              : `rec-${Date.now()}-${Math.random().toString(16).slice(2)}`)
+          : null;
+
+      if (!billEditingId) {
+        // Create bill for this month
+        const payload = {
+          user_id: session.user.id,
+          month: monthKey,
+          template_id: null,
+          recurrence_id: opts.repeat ? recurrenceId : null,
+          name: billDraft.name.trim(),
+          account_id: null,
+          due_date: billDraft.due_date,
+          amount,
+          paid: billDraft.paid,
+        };
+        const { data, error } = await supabase
+          .from("bills_monthly")
+          .insert(payload)
+          .select("id,month,template_id,recurrence_id,name,account_id,due_date,amount,paid")
+          .single();
+        if (error) throw error;
+
+        // Repeat: create rows for future months
+        if (opts.repeat && recurrenceId) {
+          const months: string[] = [];
+          for (let i = 1; i <= 24; i++) months.push(addMonthsToKey(monthKey, i));
+          const futureRows = months.map((m) => ({
+            user_id: session.user.id,
+            month: m,
+            template_id: null,
+            recurrence_id: recurrenceId,
+            name: billDraft.name.trim(),
+            account_id: null,
+            due_date: clampDueDateForMonth(m, dueDay),
+            amount,
+            paid: false,
+          }));
+          const upsertRes = await supabase.from("bills_monthly").upsert(futureRows, { onConflict: "user_id,month,recurrence_id" });
+          if (upsertRes.error) throw upsertRes.error;
+        }
+
+        setBillsMonthly((prev) =>
+          [...prev, data as BillMonthlyRow].sort((a, b) => (a.due_date ?? "").localeCompare(b.due_date ?? "")),
+        );
+      } else {
+        // Edit bill for this month only or future
+        const current = billsMonthly.find((b) => b.id === billEditingId) ?? null;
+        const existingRecurrence = current?.recurrence_id ?? null;
+        const useRecurrence = opts.applyToFuture ? existingRecurrence ?? recurrenceId : null;
+
+        // Ensure current row has recurrence_id if applying to future and missing
+        if (opts.applyToFuture && useRecurrence && !existingRecurrence) {
+          const { error } = await supabase
+            .from("bills_monthly")
+            .update({ recurrence_id: useRecurrence })
+            .eq("id", billEditingId)
+            .eq("user_id", session.user.id);
+          if (error) throw error;
+        }
+
+        const payload = {
+          name: billDraft.name.trim(),
+          account_id: null,
+          due_date: billDraft.due_date,
+          amount,
+          paid: billDraft.paid,
+        };
+        const { data, error } = await supabase
+          .from("bills_monthly")
+          .update(payload)
+          .eq("id", billEditingId)
+          .eq("user_id", session.user.id)
+          .select("id,month,template_id,recurrence_id,name,account_id,due_date,amount,paid")
+          .single();
+        if (error) throw error;
+
+        // Apply to future months
+        if (opts.applyToFuture && useRecurrence) {
+          const months: string[] = [];
+          for (let i = 1; i <= 24; i++) months.push(addMonthsToKey(monthKey, i));
+          const futureRows = months.map((m) => ({
+            user_id: session.user.id,
+            month: m,
+            template_id: null,
+            recurrence_id: useRecurrence,
+            name: billDraft.name.trim(),
+            account_id: null,
+            due_date: clampDueDateForMonth(m, dueDay),
+            amount,
+            paid: false,
+          }));
+          const upsertRes = await supabase.from("bills_monthly").upsert(futureRows, { onConflict: "user_id,month,recurrence_id" });
+          if (upsertRes.error) throw upsertRes.error;
+        }
+
         setBillsMonthly((prev) =>
           prev
             .map((x) => (x.id === billEditingId ? (data as BillMonthlyRow) : x))
@@ -1152,6 +1397,56 @@ export default function Home() {
       setBillOpen(false);
     } catch (e) {
       setAuthError(e instanceof Error ? e.message : "Failed to delete bill");
+    } finally {
+      setBillSaving(false);
+    }
+  };
+
+  const deleteBillWithConfirm = async (opts: { allFuture: boolean }) => {
+    if (!billEditingId) return;
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+    setAuthError(null);
+    setBillSaving(true);
+    try {
+      const current = billsMonthly.find((b) => b.id === billEditingId) ?? null;
+      const rec = current?.recurrence_id ?? null;
+
+      if (opts.allFuture && rec) {
+        const { error } = await supabase
+          .from("bills_monthly")
+          .delete()
+          .eq("user_id", session.user.id)
+          .eq("recurrence_id", rec)
+          .gte("month", monthKey);
+        if (error) throw error;
+      } else {
+        const { error } = await supabase.from("bills_monthly").delete().eq("id", billEditingId).eq("user_id", session.user.id);
+        if (error) throw error;
+      }
+
+      // For current month UI, removing the current row is enough.
+      setBillsMonthly((prev) => prev.filter((b) => b.id !== billEditingId));
+      setBillOpen(false);
+      setBillDeleteConfirmOpen(false);
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Failed to delete bill");
+    } finally {
+      setBillSaving(false);
+    }
+  };
+
+  const deleteAllBillsThisMonth = async () => {
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+    setAuthError(null);
+    setBillSaving(true);
+    try {
+      const { error } = await supabase.from("bills_monthly").delete().eq("user_id", session.user.id).eq("month", monthKey);
+      if (error) throw error;
+      setBillsMonthly([]);
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Failed to delete bills");
     } finally {
       setBillSaving(false);
     }
@@ -1204,33 +1499,24 @@ export default function Home() {
     if (!supabase) return;
 
     // If user already has accounts/categories/templates, do nothing.
-    const [acctHead, catHead, tmplHead] = await Promise.all([
+    const [acctHead, catHead] = await Promise.all([
       supabase.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", session.user.id),
       supabase.from("categories").select("id", { count: "exact", head: true }).eq("user_id", session.user.id),
-      supabase.from("bill_templates").select("id", { count: "exact", head: true }).eq("user_id", session.user.id),
     ]);
 
     if (acctHead.error) throw acctHead.error;
     if (catHead.error) throw catHead.error;
-    if (tmplHead.error) throw tmplHead.error;
-
     const acctCount = acctHead.count ?? 0;
     const catCount = catHead.count ?? 0;
-    const tmplCount = tmplHead.count ?? 0;
 
     // Copy default rows
-    const [defaultAccounts, defaultCategories, defaultTemplates] = await Promise.all([
+    const [defaultAccounts, defaultCategories] = await Promise.all([
       supabase.from("accounts").select("name,currency,opening_balance,archived").is("user_id", null),
       supabase.from("categories").select("name,color,kind,archived").is("user_id", null),
-      supabase
-        .from("bill_templates")
-        .select("name,default_due_day,default_amount,active")
-        .is("user_id", null),
     ]);
 
     if (defaultAccounts.error) throw defaultAccounts.error;
     if (defaultCategories.error) throw defaultCategories.error;
-    if (defaultTemplates.error) throw defaultTemplates.error;
 
     if ((acctCount ?? 0) === 0 && defaultAccounts.data?.length) {
       await supabase.from("accounts").insert(
@@ -1244,39 +1530,9 @@ export default function Home() {
       );
     }
 
-    if ((catCount ?? 0) === 0 && defaultCategories.data?.length) {
-      await supabase.from("categories").insert(
-        defaultCategories.data.map((c) => ({
-          user_id: session.user.id,
-          name: c.name,
-          color: c.color,
-          kind: c.kind,
-          archived: c.archived,
-        })),
-      );
-    }
+    // Categories templates are intentionally not copied. Users create categories themselves.
 
-    if ((tmplCount ?? 0) === 0 && defaultTemplates.data?.length) {
-      // pick a default account for templates: "Kasikorn" if present
-      const acctRes = await supabase
-        .from("accounts")
-        .select("id,name")
-        .eq("user_id", session.user.id)
-        .eq("name", "Kasikorn")
-        .maybeSingle();
-      const kasikornId = acctRes.data?.id ?? null;
-
-      await supabase.from("bill_templates").insert(
-        defaultTemplates.data.map((t) => ({
-          user_id: session.user.id,
-          name: t.name,
-          default_account_id: kasikornId,
-          default_due_day: t.default_due_day,
-          default_amount: t.default_amount,
-          active: t.active,
-        })),
-      );
-    }
+    // Bill templates are intentionally not used. Bills are created ad-hoc and can be repeated via recurrence_id.
 
     // Ensure budgets exist for the current selected month (monthKey).
     // We upsert to avoid duplicates (unique: user_id, month, category_id).
@@ -1287,35 +1543,7 @@ export default function Home() {
       .eq("month", monthKey);
     if (budgetHead.error) throw budgetHead.error;
 
-    const budgetCount = budgetHead.count ?? 0;
-    if (budgetCount === 0) {
-      const catsRes = await supabase
-        .from("categories")
-        .select("id,name,kind,archived")
-        .eq("user_id", session.user.id)
-        .eq("archived", false)
-        .eq("kind", "expense");
-      if (catsRes.error) throw catsRes.error;
-
-      const byName = new Map<string, { id: string; name: string }>();
-      (catsRes.data ?? []).forEach((c) => byName.set(c.name, { id: c.id, name: c.name }));
-
-      const rows = EXPENSE_CATEGORY_ORDER.map((name) => {
-        const cat = byName.get(name);
-        if (!cat) return null;
-        return {
-          user_id: session.user.id,
-          month: monthKey,
-          category_id: cat.id,
-          amount: DEFAULT_BUDGETS_THB[name],
-        };
-      }).filter(Boolean) as { user_id: string; month: string; category_id: string; amount: number }[];
-
-      if (rows.length > 0) {
-        const upsertRes = await supabase.from("budgets").upsert(rows, { onConflict: "user_id,month,category_id" });
-        if (upsertRes.error) throw upsertRes.error;
-      }
-    }
+    // Budgets are created per-category when user adds categories (no budget templates).
   };
 
   // ---------------------------------------------------------------------------
@@ -1330,7 +1558,7 @@ export default function Home() {
       try {
         await ensureUserDefaults();
 
-        const [acctRes, catRes, budgetRes, txRes] = await Promise.all([
+        const [acctRes, catRes, budgetRes, txRes, catMonthRes] = await Promise.all([
           supabase
             .from("accounts")
             .select("id,name,opening_balance,archived")
@@ -1346,23 +1574,24 @@ export default function Home() {
             .order("name"),
           supabase.from("budgets").select("id,month,category_id,amount").eq("user_id", session.user.id).eq("month", monthKey),
           supabase.from("transactions").select("*").eq("user_id", session.user.id),
+          supabase.from("category_month_settings").select("id,month,category_id,hidden").eq("user_id", session.user.id).eq("month", monthKey),
         ]);
 
         if (acctRes.error) throw acctRes.error;
         if (catRes.error) throw catRes.error;
         if (budgetRes.error) throw budgetRes.error;
         if (txRes.error) throw txRes.error;
+        if (catMonthRes.error) throw catMonthRes.error;
 
         setAccounts((acctRes.data ?? []) as AccountRow[]);
         setCategories((catRes.data ?? []) as CategoryRow[]);
         setBudgets((budgetRes.data ?? []) as BudgetRow[]);
         setTransactions((txRes.data ?? []) as TransactionRow[]);
+        setCategoryMonthSettings((catMonthRes.data ?? []) as CategoryMonthSettingRow[]);
 
-        // Ensure monthly bills exist and load them
-        await supabase.rpc("ensure_bills_for_month", { p_month: monthKey });
         const billsRes = await supabase
           .from("bills_monthly")
-          .select("id,month,template_id,name,account_id,due_date,amount,paid")
+          .select("id,month,template_id,recurrence_id,name,account_id,due_date,amount,paid")
           .eq("user_id", session.user.id)
           .eq("month", monthKey)
           .order("due_date")
@@ -1397,6 +1626,14 @@ export default function Home() {
     [transactions, monthEndIso, monthStart],
   );
 
+  const hiddenCategoryIdsForMonth = useMemo(() => {
+    const s = new Set<string>();
+    categoryMonthSettings.forEach((r) => {
+      if (r.month === monthKey && r.hidden) s.add(r.category_id);
+    });
+    return s;
+  }, [categoryMonthSettings, monthKey]);
+
   const monthIncome = useMemo(
     () => txInMonth.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0),
     [txInMonth],
@@ -1424,13 +1661,15 @@ export default function Home() {
   }, [budgets]);
 
   const budgetCards = useMemo(() => {
-    const expenseCats = sortExpenseCategoriesByDisplayOrder(categories.filter((c) => c.kind === "expense" && !c.archived));
+    const expenseCats = sortExpenseCategoriesByDisplayOrder(
+      categories.filter((c) => c.kind === "expense" && !c.archived && !hiddenCategoryIdsForMonth.has(c.id)),
+    );
     return expenseCats.map((c) => ({
       category: c,
       spent: spentByCategoryId.get(c.id) ?? 0,
       budget: budgetByCategoryId.get(c.id) ?? 0,
     }));
-  }, [budgetByCategoryId, categories, spentByCategoryId]);
+  }, [budgetByCategoryId, categories, hiddenCategoryIdsForMonth, spentByCategoryId]);
 
   const budgetCardsTotal = useMemo(() => budgetCards.reduce((s, x) => s + x.budget, 0), [budgetCards]);
   const budgetTotalOverrideValue = useMemo(() => {
@@ -1491,7 +1730,9 @@ export default function Home() {
   const expenseDonutSegments = useMemo(() => {
     const rows: { key: string; label: string; amount: number; color: string }[] = [];
 
-    sortExpenseCategoriesByDisplayOrder(categories.filter((c) => c.kind === "expense" && !c.archived)).forEach((c) => {
+    sortExpenseCategoriesByDisplayOrder(
+      categories.filter((c) => c.kind === "expense" && !c.archived && !hiddenCategoryIdsForMonth.has(c.id)),
+    ).forEach((c) => {
       const amt = spentByCategoryId.get(c.id) ?? 0;
       if (amt <= 0) return;
       rows.push({ key: c.id, label: c.name, amount: amt, color: resolveExpenseCategoryDisplayColor(c) });
@@ -1503,7 +1744,7 @@ export default function Home() {
     }
 
     return rows.sort((a, b) => b.amount - a.amount);
-  }, [categories, spentByCategoryId]);
+  }, [categories, hiddenCategoryIdsForMonth, spentByCategoryId]);
 
   const expensesTxInMonth = useMemo(() => txInMonth.filter((t) => t.type === "expense"), [txInMonth]);
 
@@ -1971,12 +2212,22 @@ export default function Home() {
               </button>
             )}
             {activePage === "bills" && (
-              <button
-                onClick={openBill}
-                className={`rounded border ${frameBorder} bg-white/[0.02] px-2.5 py-1 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
-              >
-                + Bill
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={openBill}
+                  className={`rounded border ${frameBorder} bg-white/[0.02] px-2.5 py-1 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                >
+                  + Bill
+                </button>
+                <button
+                  onClick={deleteAllBillsThisMonth}
+                  className={`rounded border ${frameBorder} bg-white/[0.02] px-2.5 py-1 text-sm font-medium text-[#ff5555] hover:bg-white/[0.04] disabled:opacity-60`}
+                  disabled={billSaving}
+                  title="Delete all bills in this month"
+                >
+                  Clear bills
+                </button>
+              </div>
             )}
           </div>
         </div>
@@ -2132,7 +2383,9 @@ export default function Home() {
                       >
                         None
                       </button>
-                      {sortExpenseCategoriesByDisplayOrder(categories.filter((c) => c.kind === "expense" && !c.archived)).map((c) => {
+                      {sortExpenseCategoriesByDisplayOrder(
+                        categories.filter((c) => c.kind === "expense" && !c.archived && !hiddenCategoryIdsForMonth.has(c.id)),
+                      ).map((c) => {
                         const sel = expenseDraft.category_id === c.id;
                         const col = resolveExpenseCategoryDisplayColor(c);
                         return (
@@ -2645,16 +2898,7 @@ export default function Home() {
               <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
                 <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
                   <div className="text-sm font-semibold text-white">Edit goal</div>
-                  <div className="flex items-center gap-2">
-                    {goalEditId && (
-                      <button
-                        type="button"
-                        onClick={() => deleteGoal(goalEditId)}
-                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-xs font-medium text-[#ff5555] hover:bg-white/[0.04]`}
-                      >
-                        Delete
-                      </button>
-                    )}
+                  <div className="flex items-center gap-1">
                     <button
                       onClick={() => setGoalEditOpen(false)}
                       className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
@@ -2700,6 +2944,15 @@ export default function Home() {
                 </div>
 
                 <div className={`flex items-center justify-end gap-2 border-t ${frameBorder} px-3.5 py-2.5`}>
+                  {goalEditId && (
+                    <button
+                      type="button"
+                      onClick={() => deleteGoal(goalEditId)}
+                      className={`mr-auto rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium text-[#ff5555] hover:bg-white/[0.04]`}
+                    >
+                      Delete
+                    </button>
+                  )}
                   <button
                     onClick={() => setGoalEditOpen(false)}
                     className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
@@ -2732,13 +2985,62 @@ export default function Home() {
 
                 <div className="space-y-3 p-3.5">
                   <div>
-                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Name</label>
-                    <input
-                      value={categoryDraft.name}
-                      onChange={(e) => setCategoryDraft((d) => ({ ...d, name: e.target.value }))}
-                      className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
-                      placeholder="e.g. Groceries"
-                    />
+                    <div className="mt-0.5 flex flex-wrap gap-2">
+                      {presetBadges.map((b) => {
+                        const sel = categoryBadgeMode === "preset" && categoryDraft.name === b.name;
+                        return (
+                          <button
+                            key={b.name}
+                            type="button"
+                            onClick={() => {
+                              setCategoryBadgeMode("preset");
+                              setCategoryDraft((d) => ({ ...d, name: b.name }));
+                            }}
+                            className={`rounded border px-3 py-2 text-left text-sm ${
+                              sel ? "border-[#444747] bg-black text-white" : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
+                            }`}
+                          >
+                            <span className="inline-flex items-center">
+                              <span
+                                className="rounded-full px-3 py-1 text-[12px] font-semibold text-black"
+                                style={{ backgroundColor: b.color }}
+                              >
+                                {b.name}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                      {categoryBadgeMode === "custom" ? (
+                        <div className={`rounded border border-[#444747] bg-black px-3 py-2`}>
+                          <div className="inline-flex items-center gap-2">
+                            <span className="rounded-full bg-white/[0.06] px-3 py-1 text-[12px] font-semibold text-white">+</span>
+                            <input
+                              value={categoryDraft.name}
+                              onChange={(e) => setCategoryDraft((d) => ({ ...d, name: e.target.value }))}
+                              autoFocus
+                              className="w-[180px] bg-transparent text-[12px] font-semibold text-white outline-none placeholder:text-white/40"
+                              placeholder="New category"
+                            />
+                          </div>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setCategoryBadgeMode("custom");
+                            setCategoryDraft((d) => ({ ...d, name: "" }));
+                          }}
+                          className={`rounded border px-3 py-2 text-left text-sm ${
+                            `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
+                          }`}
+                        >
+                          <span className="inline-flex items-center">
+                            <span className="rounded-full bg-white/[0.06] px-3 py-1 text-[12px] font-semibold text-white">+</span>
+                          </span>
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div>
                     <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Monthly budget</label>
@@ -2810,8 +3112,7 @@ export default function Home() {
                 <div className={`flex items-center justify-end gap-2 border-t ${frameBorder} px-3.5 py-2.5`}>
                   <button
                     onClick={() => {
-                      if (categoryEditId) deleteCategory(categoryEditId);
-                      setCategoryEditOpen(false);
+                      setCategoryDeleteConfirmOpen(true);
                     }}
                     disabled={categoryEditSaving}
                     className={`mr-auto rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium text-[#ff5555] hover:bg-white/[0.04] disabled:opacity-50`}
@@ -2830,6 +3131,90 @@ export default function Home() {
                     className="rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111] disabled:opacity-50"
                   >
                     {categoryEditSaving ? "Saving…" : "Save changes"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {categoryApplyConfirmOpen && categoryEditId && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+                <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                  <div className="text-sm font-semibold text-white">Would you like to apply this category to all future months?</div>
+                  <button
+                    onClick={() => setCategoryApplyConfirmOpen(false)}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-2 p-3.5">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setCategoryApplyConfirmOpen(false);
+                      await saveCategoryEditWithConfirm({ applyToFuture: false });
+                    }}
+                    disabled={categoryConfirmBusy || categoryEditSaving}
+                    className={`w-full rounded border ${frameBorder} bg-white/[0.02] px-3 py-3 text-left text-sm font-medium text-white hover:bg-white/[0.04] disabled:opacity-50`}
+                  >
+                    This month only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setCategoryApplyConfirmOpen(false);
+                      await saveCategoryEditWithConfirm({ applyToFuture: true });
+                    }}
+                    disabled={categoryConfirmBusy || categoryEditSaving}
+                    className="w-full rounded bg-[#00CCCC] px-3 py-3 text-left text-sm font-semibold text-[#111] disabled:opacity-50"
+                  >
+                    Apply to all future months
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {categoryDeleteConfirmOpen && categoryEditId && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+                <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                  <div className="text-sm font-semibold text-white">Would you like to delete this category to all future months</div>
+                  <button
+                    onClick={() => setCategoryDeleteConfirmOpen(false)}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-2 p-3.5">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setCategoryDeleteConfirmOpen(false);
+                      setCategoryEditOpen(false);
+                      await hideCategoryForMonth({ id: categoryEditId, mKey: monthKey });
+                    }}
+                    disabled={categoryConfirmBusy || categoryEditSaving}
+                    className={`w-full rounded border ${frameBorder} bg-white/[0.02] px-3 py-3 text-left text-sm font-medium text-white hover:bg-white/[0.04] disabled:opacity-50`}
+                  >
+                    This month only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setCategoryDeleteConfirmOpen(false);
+                      setCategoryEditOpen(false);
+                      await hideCategoryAllFutureMonths({ id: categoryEditId });
+                    }}
+                    disabled={categoryConfirmBusy || categoryEditSaving}
+                    className="w-full rounded bg-[#ff5555] px-3 py-3 text-left text-sm font-semibold text-[#111] disabled:opacity-50"
+                  >
+                    Delete all future months
                   </button>
                 </div>
               </div>
@@ -2943,28 +3328,6 @@ export default function Home() {
                       />
                     </div>
                   </div>
-                  <div>
-                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Account</label>
-                    <div className={`mt-1 flex gap-1 overflow-x-auto rounded border ${frameBorder} bg-white/[0.02] p-1`}>
-                      {orderedAccounts.map((a) => {
-                        const sel = billDraft.account_id === a.id;
-                        return (
-                          <button
-                            key={`bill-${a.id}`}
-                            type="button"
-                            onClick={() => setBillDraft((d) => ({ ...d, account_id: a.id }))}
-                            className={`shrink-0 rounded px-2.5 py-1.5 text-center text-[11px] font-medium ${
-                              sel
-                                ? "border border-[#444747] bg-black text-white shadow-[0_1px_0_rgba(255,255,255,0.04)]"
-                                : `${headingColor} hover:text-white`
-                            }`}
-                          >
-                            {a.name}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
                   <div className="flex items-center justify-between">
                     <div className={`text-xs uppercase tracking-[0.5px] ${headingColor}`}>Paid</div>
                     <button
@@ -2982,7 +3345,7 @@ export default function Home() {
                 <div className={`flex items-center justify-end gap-2 border-t ${frameBorder} px-3.5 py-2.5`}>
                   {billEditingId && (
                     <button
-                      onClick={deleteBillMonthly}
+                      onClick={() => setBillDeleteConfirmOpen(true)}
                       disabled={billSaving}
                       className={`mr-auto rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium text-[#ff5555] hover:bg-white/[0.04] disabled:opacity-50`}
                     >
@@ -2996,11 +3359,99 @@ export default function Home() {
                     Cancel
                   </button>
                   <button
-                    onClick={saveBillMonthly}
+                    onClick={() => {
+                      setBillConfirmMode(billEditingId ? "edit" : "create");
+                      setBillConfirmOpen(true);
+                    }}
                     disabled={billSaving}
                     className="rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111] disabled:opacity-50"
                   >
                     {billSaving ? "Saving…" : billEditingId ? "Save changes" : "Save bill"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {billConfirmOpen && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+                <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                  <div className="text-sm font-semibold text-white">
+                    {billConfirmMode === "create"
+                      ? "Would you like this bill to repeat every month?"
+                      : "Would you like to apply this change to all future months?"}
+                  </div>
+                  <button
+                    onClick={() => setBillConfirmOpen(false)}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-2 p-3.5">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setBillConfirmOpen(false);
+                      await saveBillWithConfirm({ repeat: false, applyToFuture: false });
+                    }}
+                    className={`w-full rounded border ${frameBorder} bg-white/[0.02] px-3 py-3 text-left text-sm font-medium text-white hover:bg-white/[0.04]`}
+                  >
+                    This month only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setBillConfirmOpen(false);
+                      await saveBillWithConfirm({
+                        repeat: billConfirmMode === "create",
+                        applyToFuture: billConfirmMode === "edit",
+                      });
+                    }}
+                    className="w-full rounded bg-[#00CCCC] px-3 py-3 text-left text-sm font-semibold text-[#111]"
+                  >
+                    {billConfirmMode === "create" ? "Repeat every month" : "Apply to all future months"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {billDeleteConfirmOpen && billEditingId && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+                <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                  <div className="text-sm font-semibold text-white">Would you like to delete this bill to all future months</div>
+                  <button
+                    onClick={() => setBillDeleteConfirmOpen(false)}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-2 p-3.5">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setBillDeleteConfirmOpen(false);
+                      await deleteBillWithConfirm({ allFuture: false });
+                    }}
+                    className={`w-full rounded border ${frameBorder} bg-white/[0.02] px-3 py-3 text-left text-sm font-medium text-white hover:bg-white/[0.04]`}
+                  >
+                    This month only
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setBillDeleteConfirmOpen(false);
+                      await deleteBillWithConfirm({ allFuture: true });
+                    }}
+                    className="w-full rounded bg-[#ff5555] px-3 py-3 text-left text-sm font-semibold text-[#111]"
+                  >
+                    Delete all future months
                   </button>
                 </div>
               </div>
@@ -3539,7 +3990,6 @@ export default function Home() {
                     <thead>
                       <tr className={tableHeadRowClass}>
                         <th className="px-2.5 py-2 text-left font-normal">Name</th>
-                        <th className="px-2.5 py-2 text-right font-normal">Account</th>
                         <th className="px-2.5 py-2 text-right font-normal">Due</th>
                         <th className="px-2.5 py-2 text-right font-normal">Amount</th>
                         <th className="px-2.5 py-2 text-right font-normal">Status</th>
@@ -3547,7 +3997,6 @@ export default function Home() {
                     </thead>
                     <tbody>
                       {billsMonthly.map((bill, i) => {
-                        const accountName = accounts.find((a) => a.id === bill.account_id)?.name ?? "—";
                         return (
                         <tr key={`${bill.name}-${i}`} className={`border-b ${frameBorder} last:border-0`}>
                           <td className={`px-2.5 py-2.5 text-left ${itemNameColor}`}>
@@ -3555,7 +4004,6 @@ export default function Home() {
                               {bill.name}
                             </button>
                           </td>
-                          <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>{accountName}</td>
                           <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>
                             {bill.due_date ? formatLongDate(bill.due_date) : "—"}
                           </td>
@@ -3695,8 +4143,18 @@ export default function Home() {
                           </div>
                         </td>
                         <td className={`px-2.5 py-2.5 text-right text-white`}>{fmt(Math.max(remaining, 0))}</td>
-                        <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>{`฿${Math.round(Math.max(remaining, 0) / DAYS_LEFT_FALLBACK)}`}</td>
-                        <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>{`฿${Math.round(Math.max(remaining, 0) / 2)}`}</td>
+                        {(() => {
+                          const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+                          const remSafe = Math.max(remaining, 0);
+                          const daily = daysInMonth > 0 ? remSafe / daysInMonth : 0;
+                          const weekly = daysInMonth > 0 ? (remSafe * 7) / daysInMonth : 0;
+                          return (
+                            <>
+                              <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>{`฿${Math.round(daily)}`}</td>
+                              <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>{`฿${Math.round(weekly)}`}</td>
+                            </>
+                          );
+                        })()}
                         <td className="px-2.5 py-2.5 text-right">
                           {budgetAmt === 0 ? (
                             <span className={headingColor}>—</span>
@@ -3723,12 +4181,7 @@ export default function Home() {
                             className={`w-[140px] rounded border ${frameBorder} bg-black px-2 py-1 text-right text-[11px] text-white outline-none focus:border-[#444747]`}
                           />
                         ) : (
-                          <button
-                            type="button"
-                            onClick={() => setBudgetTotalOverrideOpen(true)}
-                            className="text-[11px] text-white"
-                            title="Click to edit total"
-                          >
+                          <button type="button" onClick={() => setBudgetTotalOverrideOpen(true)} className="text-[11px] text-white" title="Click to edit total">
                             {fmt(budgetShareDenominator)}
                           </button>
                         )}
