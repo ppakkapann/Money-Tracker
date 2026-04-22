@@ -1,0 +1,1093 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Money Tracker 2026</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+/* ============================================================
+   RESET & ROOT VARIABLES
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #1a1a1a;
+  --surface: #202020;
+  --surface2:#262626;
+  --border:  #3a3a3a;
+  --text:    #d0d0d0;
+  --text2:   #7a7a7a;
+  --text3:   #4a4a4a;
+  --accent:  #00CCCC;
+  --warn:    #f97316;
+  --red:     #ff5555;
+  --shadow:  0 10px 30px rgba(0,0,0,0.35);
+}
+
+body {
+  font-family: 'Inter', sans-serif;
+  font-size: 13px;
+  line-height: 1.4;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+}
+
+button, input { font-family: inherit; }
+:focus-visible { outline: 2px solid rgba(0, 204, 204, 0.35); outline-offset: 2px; border-radius: 4px; }
+
+/* ============================================================
+   APP SHELL
+   ============================================================ */
+.app {
+  display: flex;
+  height: 100vh;
+  background: var(--bg);
+}
+
+/* ============================================================
+   SIDEBAR
+   ============================================================ */
+.sidebar {
+  width: 150px;
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  background: linear-gradient(180deg, rgba(255,255,255,0.02), transparent 60%);
+}
+
+.sidebar-title {
+  padding: 14px 12px 10px;
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.7px;
+  color: var(--accent);
+  border-bottom: 1px solid var(--border);
+  line-height: 1.5;
+}
+
+.nav { flex: 1; padding: 5px 0; }
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: var(--text3);
+  font-size: 11px;
+  border-left: 2px solid transparent;
+  transition: all 0.12s;
+  user-select: none;
+}
+
+.nav-item:hover { color: var(--text2); background: rgba(255,255,255,0.02); }
+
+.nav-item.active {
+  color: var(--accent);
+  border-left-color: var(--accent);
+  background: rgba(0,204,204,0.05);
+}
+
+.nav-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ============================================================
+   MAIN AREA
+   ============================================================ */
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+
+/* ============================================================
+   TOP BAR
+   ============================================================ */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: rgba(26,26,26,0.7);
+  backdrop-filter: blur(10px);
+}
+
+.month-nav { display: flex; align-items: center; gap: 8px; }
+
+.month-btn {
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--border);
+  background: rgba(255,255,255,0.02);
+  border-radius: 3px;
+  cursor: pointer;
+  color: var(--text2);
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.12s;
+}
+.month-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+.month-title { font-size: 12px; font-weight: 500; }
+
+.actions { display: flex; gap: 6px; }
+
+.btn {
+  padding: 4px 10px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  cursor: pointer;
+  border: none;
+  font-family: 'Inter', sans-serif;
+  letter-spacing: 0.2px;
+  transition: transform 0.08s ease, opacity 0.12s, box-shadow 0.12s;
+}
+.btn:hover { opacity: 0.92; box-shadow: 0 6px 16px rgba(0,0,0,0.25); }
+.btn:active { transform: translateY(1px); }
+.btn-expense  { background: var(--red);    color: #fff; }
+.btn-income   { background: var(--accent); color: #111; }
+.btn-transfer { background: rgba(255,255,255,0.02); border: 1px solid var(--border); color: var(--text2); }
+.btn-transfer:hover { border-color: rgba(0,204,204,0.35); color: var(--text); }
+
+/* ============================================================
+   PAGE CONTENT
+   ============================================================ */
+.page {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: none;
+}
+.page.active { display: block; }
+
+.page::-webkit-scrollbar { width: 3px; }
+.page::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ============================================================
+   STAT CARDS
+   ============================================================ */
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  margin-bottom: 11px;
+}
+
+.stat {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+}
+
+.stat-label {
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text3);
+  margin-bottom: 4px;
+}
+
+.stat-val { font-size: 15px; font-weight: 400; }
+
+.teal  { color: var(--accent); }
+.red   { color: var(--red);    }
+.muted { color: var(--text2);  }
+.warn  { color: var(--warn);   }
+
+/* ============================================================
+   PANELS
+   ============================================================ */
+.panel {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  overflow: hidden;
+  background: var(--surface);
+  box-shadow: 0 1px 0 rgba(255,255,255,0.03);
+}
+
+.panel-header {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text3);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: rgba(255,255,255,0.015);
+}
+
+.panel-header-left { display: flex; align-items: center; gap: 5px; }
+.panel-header svg { width: 11px; height: 11px; stroke: var(--accent); fill: none; stroke-width: 1.4; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ============================================================
+   LIST ROWS
+   ============================================================ */
+.list-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.list-row:last-child { border-bottom: none; }
+.list-label { color: var(--text2); }
+.list-row:hover { background: rgba(255,255,255,0.015); }
+
+/* ============================================================
+   BUDGET ROWS (with progress bar)
+   ============================================================ */
+.budget-row {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.budget-row:last-child { border-bottom: none; }
+
+.budget-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 3px;
+}
+
+.budget-name { font-size: 11px; color: var(--text2); }
+
+.budget-right {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.budget-spent { font-size: 11px; }
+.budget-daily { font-size: 9px; color: var(--text3); }
+
+.prog-bar {
+  height: 2px;
+  background: rgba(255,255,255,0.07);
+  border-radius: 1px;
+  margin: 3px 0;
+}
+
+.prog-fill { height: 100%; border-radius: 1px; transition: width 0.3s; }
+
+.budget-bottom {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--text3);
+}
+
+/* ============================================================
+   BILLS ROWS
+   ============================================================ */
+.bill-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.bill-row:last-child { border-bottom: none; }
+.bill-row:hover { background: rgba(255,255,255,0.015); }
+
+.bill-name { font-size: 11px; color: var(--text2); }
+.bill-due  { font-size: 9px;  color: var(--text3); margin-top: 1px; }
+
+.bill-right { display: flex; align-items: center; gap: 8px; }
+.bill-amt   { font-size: 11px; color: var(--text2); }
+
+.badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 2px;
+  font-size: 9px;
+  cursor: pointer;
+  user-select: none;
+  transition: opacity 0.12s;
+  letter-spacing: 0.2px;
+}
+.badge:hover { opacity: 0.75; }
+.badge-paid   { background: rgba(0,204,204,0.1); color: var(--accent); }
+.badge-unpaid { background: rgba(255,85,85,0.1); color: var(--red);    }
+
+/* Editable price input */
+.editable-price {
+  background: rgba(255,255,255,0.02);
+  border: 1px solid transparent;
+  color: var(--text);
+  font-size: 11px;
+  font-family: 'Inter', sans-serif;
+  text-align: right;
+  width: 85px;
+  outline: none;
+  cursor: text;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+.editable-price:hover { border-color: rgba(255,255,255,0.08); }
+.editable-price:focus { border-color: rgba(0,204,204,0.45); color: var(--accent); }
+
+/* ============================================================
+   EXPENSE / INCOME ROWS
+   ============================================================ */
+.tx-row {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+.tx-row:last-child { border-bottom: none; }
+
+.tx-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 2px;
+}
+
+.tx-name { font-size: 11px; }
+.tx-amt  { font-size: 11px; font-weight: 500; }
+
+.tx-meta {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--text3);
+}
+
+/* ============================================================
+   DASHBOARD 3-COLUMN LAYOUT
+   ============================================================ */
+.dash-grid {
+  display: grid;
+  grid-template-columns: 1fr 1.15fr 0.85fr;
+  gap: 8px;
+  align-items: start;
+}
+
+.gap-col { display: flex; flex-direction: column; gap: 8px; }
+
+/* ============================================================
+   SAVINGS PANEL
+   ============================================================ */
+.savings-body { padding: 8px 10px; }
+.savings-title { font-size: 11px; font-weight: 500; }
+.savings-sub   { font-size: 9px; color: var(--text3); margin-top: 2px; }
+
+.savings-pct-row {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9px;
+  color: var(--text3);
+  margin-top: 6px;
+}
+
+.mini-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.mini-item {
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 5px 7px;
+}
+
+.mini-label { font-size: 9px; color: var(--text3); }
+.mini-val   { font-size: 10px; margin-top: 1px; }
+
+/* ============================================================
+   ACCOUNTS PAGE
+   ============================================================ */
+.accounts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  padding: 10px;
+}
+
+.account-card {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.account-name { font-size: 9px; color: var(--text3); text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 4px; }
+.account-bal  { font-size: 14px; font-weight: 400; }
+
+/* ============================================================
+   TABLES (categories, transfers, etc.)
+   ============================================================ */
+table { width: 100%; border-collapse: collapse; }
+
+th {
+  padding: 7px 10px;
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--text3);
+  font-weight: 400;
+  text-align: right;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+th:first-child { text-align: left; }
+
+td {
+  padding: 7px 10px;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text2);
+  text-align: right;
+  vertical-align: middle;
+}
+td:first-child { text-align: left; color: var(--text); }
+tr:last-child td { border-bottom: none; }
+tbody tr:hover td { background: rgba(255,255,255,0.015); }
+
+.cat-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.on-track { color: var(--accent); font-size: 9px; }
+
+/* ============================================================
+   EMPTY STATE
+   ============================================================ */
+.empty {
+  padding: 20px;
+  text-align: center;
+  font-size: 10px;
+  color: var(--text3);
+}
+
+/* ============================================================
+   UTILITY
+   ============================================================ */
+.mb-8 { margin-bottom: 8px; }
+
+/* ============================================================
+   RESPONSIVE
+   ============================================================ */
+@media (max-width: 980px) {
+  body { overflow: auto; }
+  .app { height: auto; min-height: 100vh; }
+  .sidebar { width: 180px; }
+  .dash-grid { grid-template-columns: 1fr; }
+  .stat-row { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 560px) {
+  .sidebar { display: none; }
+  .topbar { position: sticky; top: 0; z-index: 5; }
+  .actions { gap: 4px; }
+  .btn { padding: 6px 10px; font-size: 11px; }
+  .page { padding: 10px; }
+  .stat-row { grid-template-columns: 1fr; }
+  th, td { padding: 8px 8px; }
+}
+</style>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ═══════════════════════════════════════════
+       SIDEBAR
+  ═══════════════════════════════════════════ -->
+  <div class="sidebar">
+    <div class="sidebar-title">Money Tracker<br>2026</div>
+    <nav class="nav">
+
+      <div class="nav-item active" onclick="showPage('dashboard', 0)">
+        <svg class="nav-icon" viewBox="0 0 13 13">
+          <rect x="1" y="1" width="4.5" height="4.5" rx=".8"/>
+          <rect x="7.5" y="1" width="4.5" height="4.5" rx=".8"/>
+          <rect x="1" y="7.5" width="4.5" height="4.5" rx=".8"/>
+          <rect x="7.5" y="7.5" width="4.5" height="4.5" rx=".8"/>
+        </svg>
+        Dashboard
+      </div>
+
+      <div class="nav-item" onclick="showPage('accounts', 1)">
+        <svg class="nav-icon" viewBox="0 0 13 13">
+          <rect x="1" y="3" width="11" height="8" rx="1"/>
+          <path d="M1 6h11M4 3V2M9 3V2"/>
+        </svg>
+        Accounts
+      </div>
+
+      <div class="nav-item" onclick="showPage('bills', 2)">
+        <svg class="nav-icon" viewBox="0 0 13 13">
+          <rect x="2" y="1" width="9" height="11" rx="1"/>
+          <path d="M4.5 4.5h4M4.5 7h4M4.5 9.5h2"/>
+        </svg>
+        Bills
+      </div>
+
+      <div class="nav-item" onclick="showPage('categories', 3)">
+        <svg class="nav-icon" viewBox="0 0 13 13">
+          <path d="M1 7h5V1H1v6zM7 13h5V7H7v6zM1 13h5v-3H1v3zM7 5h5V1H7v4z"/>
+        </svg>
+        Categories
+      </div>
+
+      <div class="nav-item" onclick="showPage('expenses', 4)">
+        <svg class="nav-icon" viewBox="0 0 13 13">
+          <path d="M2 2.5h9l-1 7H3l-1-7zM5 2.5V1.5M8 2.5V1.5"/>
+        </svg>
+        Expenses
+      </div>
+
+      <div class="nav-item" onclick="showPage('income', 5)">
+        <svg class="nav-icon" viewBox="0 0 13 13">
+          <path d="M6.5 1.5v10M3 5l3.5-3.5L10 5M2 11.5h9"/>
+        </svg>
+        Income
+      </div>
+
+    </nav>
+  </div><!-- /sidebar -->
+
+  <!-- ═══════════════════════════════════════════
+       MAIN
+  ═══════════════════════════════════════════ -->
+  <div class="main">
+
+    <!-- Top Bar -->
+    <div class="topbar">
+      <div class="month-nav">
+        <button class="month-btn" onclick="changeMonth(-1)">‹</button>
+        <span class="month-title" id="month-title">April 2026</span>
+        <button class="month-btn" onclick="changeMonth(1)">›</button>
+      </div>
+      <div class="actions">
+        <button class="btn btn-expense">+ Expense</button>
+        <button class="btn btn-income">+ Income</button>
+        <button class="btn btn-transfer">+ Transfer</button>
+      </div>
+    </div>
+
+    <!-- ─── PAGE: DASHBOARD ─── -->
+    <div class="page active" id="page-dashboard">
+
+      <!-- Summary stats -->
+      <div class="stat-row">
+        <div class="stat"><div class="stat-label">Income</div><div class="stat-val muted" id="dash-income">฿0</div></div>
+        <div class="stat"><div class="stat-label">Spent</div><div class="stat-val red"   id="dash-spent">฿521</div></div>
+        <div class="stat"><div class="stat-label">Net</div><div class="stat-val red"     id="dash-net">-฿521</div></div>
+        <div class="stat"><div class="stat-label">Bills</div><div class="stat-val muted" id="dash-bills">9/10</div></div>
+      </div>
+
+      <!-- 3-column grid -->
+      <div class="dash-grid">
+
+        <!-- COL 1: Accounts + Savings -->
+        <div class="gap-col">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-header-left">
+                <svg viewBox="0 0 13 13"><rect x="1" y="3" width="11" height="8" rx="1"/><path d="M1 6h11"/></svg>
+                Accounts
+              </div>
+            </div>
+            <div class="list-row"><span class="list-label">Kasikorn</span><span>฿9,646.97</span></div>
+            <div class="list-row"><span class="list-label">Krungsri</span><span>฿36,186.89</span></div>
+            <div class="list-row"><span class="list-label">Krungthai</span><span>฿26,295.41</span></div>
+            <div class="list-row"><span class="list-label">Bangkok Bank</span><span>฿3,700.00</span></div>
+            <div class="list-row"><span class="list-label">Cash</span><span>฿3,700.00</span></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-header-left">
+                <svg viewBox="0 0 13 13"><path d="M1 10c0-2.2 2.5-3.5 5.5-3.5S12 7.8 12 10"/><circle cx="6.5" cy="3.5" r="2"/></svg>
+                Savings Goal
+              </div>
+            </div>
+            <div class="savings-body">
+              <div class="savings-title">Bangkok Bank savings</div>
+              <div class="savings-sub">Goal: ฿100,000</div>
+              <div class="savings-pct-row"><span>36%</span><span>฿63,813 remaining</span></div>
+              <div class="prog-bar"><div class="prog-fill" style="width:36%;background:var(--accent)"></div></div>
+              <div class="mini-grid">
+                <div class="mini-item"><div class="mini-label">Balance</div><div class="mini-val teal">฿36,186.89</div></div>
+                <div class="mini-item"><div class="mini-label">Monthly needed</div><div class="mini-val teal">฿5,318</div></div>
+                <div class="mini-item"><div class="mini-label">Weekly needed</div><div class="mini-val teal">฿15,953</div></div>
+                <div class="mini-item"><div class="mini-label">Linked account</div><div class="mini-val muted">Krungsri</div></div>
+              </div>
+            </div>
+          </div>
+        </div><!-- /col1 -->
+
+        <!-- COL 2: Budget + Bills -->
+        <div class="gap-col">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-header-left">
+                <svg viewBox="0 0 13 13"><circle cx="6.5" cy="6.5" r="5"/><path d="M6.5 3.5v3l2 1.2"/></svg>
+                Budget by Category
+              </div>
+            </div>
+            <div id="budget-list"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-header-left">
+                <svg viewBox="0 0 13 13"><rect x="2" y="1" width="9" height="11" rx="1"/><path d="M4.5 4.5h4M4.5 7h4M4.5 9.5h2"/></svg>
+                Bills
+              </div>
+            </div>
+            <div id="bills-dash"></div>
+          </div>
+        </div><!-- /col2 -->
+
+        <!-- COL 3: Expenses + Income -->
+        <div class="gap-col">
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-header-left">
+                <svg viewBox="0 0 13 13"><path d="M2 2.5h9l-1 7H3l-1-7zM5 2.5V1.5M8 2.5V1.5"/></svg>
+                Expenses
+              </div>
+            </div>
+            <div id="dash-exp-list"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header">
+              <div class="panel-header-left">
+                <svg viewBox="0 0 13 13"><path d="M6.5 1.5v10M3 5l3.5-3.5L10 5M2 11.5h9"/></svg>
+                Income
+              </div>
+            </div>
+            <div id="dash-inc-list"></div>
+          </div>
+        </div><!-- /col3 -->
+
+      </div><!-- /dash-grid -->
+    </div><!-- /page-dashboard -->
+
+
+    <!-- ─── PAGE: ACCOUNTS ─── -->
+    <div class="page" id="page-accounts">
+      <div class="stat-row" style="grid-template-columns:repeat(3,1fr)">
+        <div class="stat"><div class="stat-label">Total Income (all time)</div><div class="stat-val muted">฿0.00</div></div>
+        <div class="stat"><div class="stat-label">Total Expenses (all time)</div><div class="stat-val red">฿521.00</div></div>
+        <div class="stat"><div class="stat-label">Net Balance</div><div class="stat-val teal">฿79,529.27</div></div>
+      </div>
+      <div class="panel mb-8">
+        <div class="panel-header">
+          <div class="panel-header-left">
+            <svg viewBox="0 0 13 13"><rect x="1" y="3" width="11" height="8" rx="1"/><path d="M1 6h11"/></svg>
+            Accounts
+          </div>
+        </div>
+        <div class="accounts-grid">
+          <div class="account-card"><div class="account-name">Kasikorn</div><div class="account-bal">฿9,646.97</div></div>
+          <div class="account-card"><div class="account-name">Krungsri</div><div class="account-bal">฿36,186.89</div></div>
+          <div class="account-card"><div class="account-name">Krungthai</div><div class="account-bal">฿26,295.41</div></div>
+          <div class="account-card"><div class="account-name">Bangkok Bank</div><div class="account-bal">฿3,700.00</div></div>
+          <div class="account-card"><div class="account-name">Cash</div><div class="account-bal">฿3,700.00</div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-header-left">
+            <svg viewBox="0 0 13 13"><path d="M2 6.5h9M8 3.5l3 3-3 3"/></svg>
+            Transfers
+          </div>
+        </div>
+        <table>
+          <thead><tr><th>Name</th><th>Date</th><th>Amount</th><th>From</th><th>To</th></tr></thead>
+          <tbody>
+            <tr><td>Feb (condo)</td><td>2026-03-29</td><td class="red">฿900.00</td><td>Krungthai</td><td>Krungsri</td></tr>
+            <tr><td>Savings</td><td>2026-03-27</td><td class="red">฿10,000.00</td><td>Kasikorn</td><td>Krungsri</td></tr>
+            <tr><td>From Erk</td><td>2026-04-17</td><td class="red">฿247.00</td><td>Krungsri</td><td>Kasikorn</td></tr>
+            <tr><td>Quick (Dad)</td><td>2026-04-01</td><td class="red">฿523.17</td><td>Cash</td><td>Kasikorn</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /page-accounts -->
+
+
+    <!-- ─── PAGE: BILLS ─── -->
+    <div class="page" id="page-bills">
+      <div class="stat-row" style="grid-template-columns:repeat(3,1fr)">
+        <div class="stat"><div class="stat-label">Monthly Total</div><div class="stat-val teal" id="bills-total-stat">฿4,219.86</div></div>
+        <div class="stat"><div class="stat-label">Paid</div><div class="stat-val teal" id="bills-paid-stat">9 items</div></div>
+        <div class="stat"><div class="stat-label">Unpaid</div><div class="stat-val red" id="bills-unpaid-stat">1 item</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-header-left">
+            <svg viewBox="0 0 13 13"><rect x="2" y="1" width="9" height="11" rx="1"/><path d="M4.5 4.5h4M4.5 7h4M4.5 9.5h2"/></svg>
+            Bills — April 2026
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Name</th>
+              <th>Account</th>
+              <th>Due</th>
+              <th>Amount</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="bills-full-body"></tbody>
+        </table>
+      </div>
+    </div><!-- /page-bills -->
+
+
+    <!-- ─── PAGE: CATEGORIES ─── -->
+    <div class="page" id="page-categories">
+      <div class="stat-row" style="grid-template-columns:repeat(3,1fr)">
+        <div class="stat"><div class="stat-label">Salary</div><div class="stat-val teal">฿39,000.00</div></div>
+        <div class="stat"><div class="stat-label">Spent</div><div class="stat-val red">฿521.00</div></div>
+        <div class="stat"><div class="stat-label">Days Left</div><div class="stat-val muted">9</div></div>
+      </div>
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-header-left">
+            <svg viewBox="0 0 13 13"><path d="M1 7h5V1H1v6zM7 13h5V7H7v6zM1 13h5v-3H1v3zM7 5h5V1H7v4z"/></svg>
+            Budget by Category
+          </div>
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Category</th>
+              <th>Monthly Budget</th>
+              <th>Spent</th>
+              <th>Remaining</th>
+              <th>Daily Budget</th>
+              <th>Weekly Budget</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td><span class="cat-dot" style="background:#c084fc"></span>Shopping</td><td>฿5,000<div style="font-size:9px;color:var(--text3)">13% of salary</div></td><td class="teal">฿0</td><td>฿5,000</td><td>฿556</td><td>฿2,500</td><td><span class="on-track">● On track</span></td></tr>
+            <tr><td><span class="cat-dot" style="background:#fbbf24"></span>Entertainment</td><td>฿2,000<div style="font-size:9px;color:var(--text3)">5% of salary</div></td><td class="teal">฿0</td><td>฿2,000</td><td>฿222</td><td>฿1,000</td><td><span class="on-track">● On track</span></td></tr>
+            <tr><td><span class="cat-dot" style="background:#818cf8"></span>Bills & Utilities</td><td>฿6,600<div style="font-size:9px;color:var(--text3)">17% of salary</div></td><td class="teal">฿0</td><td>฿6,600</td><td>฿733</td><td>฿3,300</td><td><span class="on-track">● On track</span></td></tr>
+            <tr><td><span class="cat-dot" style="background:#34d399"></span>Transportation</td><td>฿800<div style="font-size:9px;color:var(--text3)">2% of salary</div></td><td class="teal">฿0</td><td>฿800</td><td>฿89</td><td>฿400</td><td><span class="on-track">● On track</span></td></tr>
+            <tr><td><span class="cat-dot" style="background:#00CCCC"></span>Food & Dining</td><td>฿7,000<div style="font-size:9px;color:var(--text3)">18% of salary</div></td><td class="red">฿521</td><td>฿6,479</td><td>฿720</td><td>฿3,240</td><td><span class="on-track">● On track</span></td></tr>
+            <tr><td><span class="cat-dot" style="background:#f472b6"></span>Housing</td><td>฿4,000<div style="font-size:9px;color:var(--text3)">10% of salary</div></td><td class="teal">฿0</td><td>฿4,000</td><td>฿444</td><td>฿2,000</td><td><span class="on-track">● On track</span></td></tr>
+            <tr><td><span class="cat-dot" style="background:#2dd4bf"></span>Savings</td><td>฿10,000<div style="font-size:9px;color:var(--text3)">26% of salary</div></td><td class="teal">฿0</td><td>฿10,000</td><td>฿1,111</td><td>฿5,000</td><td><span class="on-track">● On track</span></td></tr>
+            <tr><td><span class="cat-dot" style="background:#6b7280"></span>Others</td><td>฿3,600<div style="font-size:9px;color:var(--text3)">9% of salary</div></td><td class="teal">฿0</td><td>฿3,600</td><td>฿400</td><td>฿1,800</td><td><span class="on-track">● On track</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /page-categories -->
+
+
+    <!-- ─── PAGE: EXPENSES ─── -->
+    <div class="page" id="page-expenses">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-header-left">
+            <svg viewBox="0 0 13 13"><path d="M2 2.5h9l-1 7H3l-1-7zM5 2.5V1.5M8 2.5V1.5"/></svg>
+            Expenses
+          </div>
+          <span style="color:var(--text2)">Total: <span class="red">฿521.00</span> · 1 item</span>
+        </div>
+        <table>
+          <thead><tr><th>Name</th><th>Account</th><th>Category</th><th>Date</th><th>Amount</th></tr></thead>
+          <tbody>
+            <tr><td>Macro Ingredients</td><td>Kasikorn</td><td>Food & Dining</td><td>2026-03-15</td><td class="red">฿521.00</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /page-expenses -->
+
+
+    <!-- ─── PAGE: INCOME ─── -->
+    <div class="page" id="page-income">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-header-left">
+            <svg viewBox="0 0 13 13"><path d="M6.5 1.5v10M3 5l3.5-3.5L10 5M2 11.5h9"/></svg>
+            Income
+          </div>
+          <span class="muted">Total: ฿0.00 · 0 items</span>
+        </div>
+        <table>
+          <thead><tr><th>Name</th><th>Amount</th><th>Date</th><th>Account</th><th>Note</th></tr></thead>
+          <tbody>
+            <tr><td colspan="5"><div class="empty">No income this month</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div><!-- /page-income -->
+
+  </div><!-- /main -->
+</div><!-- /app -->
+
+
+<!-- ============================================================
+     JAVASCRIPT
+     ============================================================ -->
+<script>
+/* ── DATA ────────────────────────────────────────── */
+
+const DAYS_LEFT = 9; // TODO: calculate dynamically from current date
+
+const budgets = [
+  { name: 'Shopping',      dot: '#c084fc', spent: 0,   budget: 5000  },
+  { name: 'Entertainment', dot: '#fbbf24', spent: 0,   budget: 2000  },
+  { name: 'Bills & Utils', dot: '#818cf8', spent: 0,   budget: 6600  },
+  { name: 'Transport',     dot: '#34d399', spent: 0,   budget: 800   },
+  { name: 'Food & Dining', dot: '#00CCCC', spent: 521, budget: 7000  },
+  { name: 'Housing',       dot: '#f472b6', spent: 0,   budget: 4000  },
+  { name: 'Savings',       dot: '#2dd4bf', spent: 0,   budget: 10000 },
+  { name: 'Others',        dot: '#6b7280', spent: 0,   budget: 3600  },
+];
+
+const billsData = [
+  { name: 'Insurance Alianz',    account: 'Kasikorn', due: 'Apr 1',  amount: 1847.00, paid: true  },
+  { name: 'Water (Muve 22)',     account: 'Kasikorn', due: 'Apr 1',  amount: 80.00,   paid: false },
+  { name: 'Water (Minburi)',     account: 'Kasikorn', due: 'Apr 1',  amount: 368.00,  paid: true  },
+  { name: 'AIS Internet',        account: 'Kasikorn', due: 'Apr 2',  amount: 533.93,  paid: true  },
+  { name: 'Electricity (Muve)',  account: 'Kasikorn', due: 'Apr 3',  amount: 190.00,  paid: true  },
+  { name: 'Electricity (Min)',   account: 'Kasikorn', due: 'Apr 3',  amount: 10.00,   paid: true  },
+  { name: 'Youtube',             account: 'Kasikorn', due: 'Apr 6',  amount: 60.00,   paid: true  },
+  { name: 'Spotify',             account: 'Kasikorn', due: 'Apr 26', amount: 70.00,   paid: true  },
+  { name: 'Dtac Phone',          account: 'Kasikorn', due: 'Apr 30', amount: 961.93,  paid: true  },
+];
+
+const expenses = [
+  { name: 'Macro Ingredients', amount: 521, date: '2026-03-15', cat: 'Food & Dining', account: 'Kasikorn' },
+];
+
+const incomes = [
+  // { name: 'Salary', amount: 39000, date: '2026-04-01', cat: 'Salary', account: 'Kasikorn' },
+];
+
+/* ── FORMAT ──────────────────────────────────────── */
+function fmt(n) {
+  return '฿' + n.toLocaleString('en', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/* ── NAVIGATION ─────────────────────────────────── */
+const pages    = ['dashboard','accounts','bills','categories','expenses','income'];
+const navItems = document.querySelectorAll('.nav-item');
+
+function showPage(id, idx) {
+  pages.forEach(p => document.getElementById('page-' + p).classList.remove('active'));
+  document.getElementById('page-' + id).classList.add('active');
+  navItems.forEach((n, i) => n.classList.toggle('active', i === idx));
+}
+
+/* ── MONTH NAVIGATION ───────────────────────────── */
+const MONTHS = ['January','February','March','April','May','June',
+                'July','August','September','October','November','December'];
+let currentMonth = 3; // April = index 3
+let currentYear  = 2026;
+
+function changeMonth(dir) {
+  currentMonth += dir;
+  if (currentMonth < 0)  { currentMonth = 11; currentYear--; }
+  if (currentMonth > 11) { currentMonth = 0;  currentYear++; }
+  document.getElementById('month-title').textContent = MONTHS[currentMonth] + ' ' + currentYear;
+}
+
+/* ── RENDER: BUDGET BARS ────────────────────────── */
+function renderBudget() {
+  const el = document.getElementById('budget-list');
+  el.innerHTML = '';
+  budgets.forEach(b => {
+    const rem      = b.budget - b.spent;
+    const pct      = b.budget > 0 ? Math.min(b.spent / b.budget, 1) : 0;
+    const daily    = DAYS_LEFT > 0 ? (rem / DAYS_LEFT) : 0;
+    const over85   = pct >= 0.85;
+    const barColor = over85 ? '#f97316' : '#00CCCC';
+    const amtColor = b.spent === 0 ? 'var(--text3)' : (over85 ? '#f97316' : '#00CCCC');
+
+    const div = document.createElement('div');
+    div.className = 'budget-row';
+    div.innerHTML = `
+      <div class="budget-top">
+        <span class="budget-name">
+          <span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:${b.dot};margin-right:5px;vertical-align:middle"></span>
+          ${b.name}
+        </span>
+        <div class="budget-right">
+          <span class="budget-spent" style="color:${amtColor}">${b.spent === 0 ? '—' : fmt(b.spent)}</span>
+          <span class="budget-daily" style="color:${over85 ? '#f97316' : 'var(--text3)'}">฿${Math.round(daily)}/day</span>
+        </div>
+      </div>
+      <div class="prog-bar">
+        <div class="prog-fill" style="width:${(pct * 100).toFixed(1)}%;background:${barColor}"></div>
+      </div>
+      <div class="budget-bottom">
+        <span>${(pct * 100).toFixed(0)}%</span>
+        <span>rem ${fmt(rem)}</span>
+      </div>`;
+    el.appendChild(div);
+  });
+}
+
+/* ── RENDER: BILLS (dashboard mini) ─────────────── */
+function renderBillsDash() {
+  const el = document.getElementById('bills-dash');
+  if (!el) return;
+  el.innerHTML = '';
+  billsData.forEach((b, i) => {
+    const div = document.createElement('div');
+    div.className = 'bill-row';
+    div.innerHTML = `
+      <div>
+        <div class="bill-name">${b.name}</div>
+        <div class="bill-due">due ${b.due}</div>
+      </div>
+      <div class="bill-right">
+        <span class="bill-amt">${fmt(b.amount)}</span>
+        <span class="badge ${b.paid ? 'badge-paid' : 'badge-unpaid'}"
+              onclick="toggleBill(${i})">${b.paid ? 'Paid' : 'Unpaid'}</span>
+      </div>`;
+    el.appendChild(div);
+  });
+}
+
+/* ── RENDER: BILLS (full page) ───────────────────── */
+function renderBillsFull() {
+  const tbody = document.getElementById('bills-full-body');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  let paid = 0, unpaid = 0;
+
+  billsData.forEach((b, i) => {
+    b.paid ? paid++ : unpaid++;
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td>${b.name}</td>
+      <td>${b.account}</td>
+      <td>${b.due}</td>
+      <td style="text-align:right">
+        <input class="editable-price"
+               value="${fmt(b.amount)}"
+               data-idx="${i}"
+               onchange="updateBillAmount(this)"
+               onblur="formatBillAmount(this, ${i})">
+      </td>
+      <td style="text-align:right">
+        <span class="badge ${b.paid ? 'badge-paid' : 'badge-unpaid'}"
+              onclick="toggleBill(${i})">${b.paid ? 'Paid' : 'Unpaid'}</span>
+      </td>`;
+    tbody.appendChild(tr);
+  });
+
+  const total = billsData.reduce((s, b) => s + b.amount, 0);
+  document.getElementById('bills-total-stat').textContent  = fmt(total);
+  document.getElementById('bills-paid-stat').textContent   = paid   + ' item' + (paid   !== 1 ? 's' : '');
+  document.getElementById('bills-unpaid-stat').textContent = unpaid + ' item' + (unpaid !== 1 ? 's' : '');
+
+  // Update dashboard summary badge
+  const paidCount   = billsData.filter(b =>  b.paid).length;
+  const unpaidCount = billsData.filter(b => !b.paid).length;
+  const dashBills   = document.getElementById('dash-bills');
+  if (dashBills) {
+    dashBills.textContent = paidCount + '/' + billsData.length;
+    dashBills.className   = 'stat-val ' + (unpaidCount > 0 ? 'warn' : 'teal');
+  }
+}
+
+function toggleBill(i) {
+  billsData[i].paid = !billsData[i].paid;
+  renderBillsDash();
+  renderBillsFull();
+}
+
+function updateBillAmount(el) {
+  const i   = parseInt(el.dataset.idx);
+  const val = parseFloat(el.value.replace(/[฿,]/g, ''));
+  if (!isNaN(val)) billsData[i].amount = val;
+}
+
+function formatBillAmount(el, i) {
+  el.value = fmt(billsData[i].amount);
+  renderBillsFull(); // recalculate total
+}
+
+/* ── RENDER: EXPENSES ───────────────────────────── */
+function renderDashExpenses() {
+  const el = document.getElementById('dash-exp-list');
+  if (!el) return;
+  if (expenses.length === 0) { el.innerHTML = '<div class="empty">No expenses</div>'; return; }
+  el.innerHTML = '';
+  expenses.forEach(e => {
+    const div = document.createElement('div');
+    div.className = 'tx-row';
+    div.innerHTML = `
+      <div class="tx-top">
+        <span class="tx-name">${e.name}</span>
+        <span class="tx-amt red">${fmt(e.amount)}</span>
+      </div>
+      <div class="tx-meta">
+        <span>${e.cat}</span>
+        <span>${e.date}</span>
+      </div>`;
+    el.appendChild(div);
+  });
+}
+
+/* ── RENDER: INCOME ─────────────────────────────── */
+function renderDashIncome() {
+  const el = document.getElementById('dash-inc-list');
+  if (!el) return;
+  if (incomes.length === 0) { el.innerHTML = '<div class="empty">No income this month</div>'; return; }
+  el.innerHTML = '';
+  incomes.forEach(e => {
+    const div = document.createElement('div');
+    div.className = 'tx-row';
+    div.innerHTML = `
+      <div class="tx-top">
+        <span class="tx-name">${e.name}</span>
+        <span class="tx-amt teal">${fmt(e.amount)}</span>
+      </div>
+      <div class="tx-meta">
+        <span>${e.cat}</span>
+        <span>${e.date}</span>
+      </div>`;
+    el.appendChild(div);
+  });
+}
+
+/* ── INIT ────────────────────────────────────────── */
+renderBudget();
+renderBillsDash();
+renderBillsFull();
+renderDashExpenses();
+renderDashIncome();
+</script>
+</body>
+</html>
