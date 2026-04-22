@@ -1,0 +1,16 @@
+.DS_Store
+node_modules/
+
+# env
+.env
+.env.*
+
+# Next.js / build
+.next/
+out/
+dist/
+build/
+
+# Vercel
+.vercel/
+
