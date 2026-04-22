@@ -860,7 +860,8 @@ export default function Home() {
     setCategorySaving(true);
     try {
       if (!categoryDraft.name.trim()) throw new Error("Please enter a category name");
-      const budgetAmount = Number.parseFloat(categoryDraft.monthly_budget.replace(/[฿,]/g, ""));
+      const budgetRaw = categoryDraft.monthly_budget.trim();
+      const budgetAmount = budgetRaw ? Number.parseFloat(budgetRaw.replace(/[฿,]/g, "")) : 0;
       if (!Number.isFinite(budgetAmount) || budgetAmount < 0) throw new Error("Monthly budget must be 0 or more");
 
       const categoryName = categoryDraft.name.trim();
@@ -922,7 +923,7 @@ export default function Home() {
   };
 
   const saveCategoryEditWithConfirm = async ({ applyToFuture }: { applyToFuture: boolean }) => {
-    if (!session?.user?.id) return;
+      if (!session?.user?.id) return;
     if (!supabase) return;
     if (!categoryEditId) return;
     setAuthError(null);
@@ -930,7 +931,8 @@ export default function Home() {
     try {
       const nextName = categoryEditName.trim();
       if (!nextName) throw new Error("Name cannot be empty");
-      const budgetAmount = Number.parseFloat(categoryEditBudgetRaw.replace(/[฿,]/g, ""));
+      const budgetRaw = categoryEditBudgetRaw.trim();
+      const budgetAmount = budgetRaw ? Number.parseFloat(budgetRaw.replace(/[฿,]/g, "")) : 0;
       if (!Number.isFinite(budgetAmount) || budgetAmount < 0) throw new Error("Monthly budget must be 0 or more");
 
       const budgetPayload = {
@@ -1161,6 +1163,7 @@ export default function Home() {
   const [billConfirmOpen, setBillConfirmOpen] = useState(false);
   const [billConfirmMode, setBillConfirmMode] = useState<"create" | "edit">("create");
   const [billDeleteConfirmOpen, setBillDeleteConfirmOpen] = useState(false);
+  const [billClearAllConfirmOpen, setBillClearAllConfirmOpen] = useState(false);
   const [billDraft, setBillDraft] = useState<{
     name: string;
     account_id: string;
@@ -1452,6 +1455,22 @@ export default function Home() {
     }
   };
 
+  const deleteAllBillsAllMonths = async () => {
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+    setAuthError(null);
+    setBillSaving(true);
+    try {
+      const { error } = await supabase.from("bills_monthly").delete().eq("user_id", session.user.id);
+      if (error) throw error;
+      setBillsMonthly([]);
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Failed to delete bills");
+    } finally {
+      setBillSaving(false);
+    }
+  };
+
   // ---------------------------------------------------------------------------
   // Auth
   // ---------------------------------------------------------------------------
@@ -1530,7 +1549,18 @@ export default function Home() {
       );
     }
 
-    // Categories templates are intentionally not copied. Users create categories themselves.
+    // Copy default categories (8 templates). Budgets remain month-scoped and default to 0 unless user sets them.
+    if ((catCount ?? 0) === 0 && defaultCategories.data?.length) {
+      await supabase.from("categories").insert(
+        defaultCategories.data.map((c) => ({
+          user_id: session.user.id,
+          name: c.name,
+          color: c.color,
+          kind: c.kind,
+          archived: c.archived,
+        })),
+      );
+    }
 
     // Bill templates are intentionally not used. Bills are created ad-hoc and can be repeated via recurrence_id.
 
@@ -3066,7 +3096,7 @@ export default function Home() {
                     disabled={categorySaving}
                     className="rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111] disabled:opacity-50"
                   >
-                    {categorySaving ? "Saving…" : "Save category"}
+                    {categorySaving ? "Adding…" : "Add"}
                   </button>
                 </div>
               </div>
