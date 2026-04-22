@@ -263,7 +263,13 @@ export default function Home() {
   const [budgetEditSaving, setBudgetEditSaving] = useState(false);
 
   const [goalOpen, setGoalOpen] = useState(false);
-  const [goalEditing, setGoalEditing] = useState<null | { id: string; field: "name" | "goal" | "balance" }>(null);
+  const [goalEditOpen, setGoalEditOpen] = useState(false);
+  const [goalEditId, setGoalEditId] = useState<string | null>(null);
+  const [goalEditDraft, setGoalEditDraft] = useState<{ name: string; goal_amount: string; balance_amount: string }>({
+    name: "",
+    goal_amount: "",
+    balance_amount: "",
+  });
   const [goals, setGoals] = useState<Array<{ id: string; name: string; goal_amount: string; balance_amount: string }>>([
     { id: "default", name: "House", goal_amount: "100000", balance_amount: "" },
   ]);
@@ -321,7 +327,32 @@ export default function Home() {
 
   const deleteGoal = (id: string) => {
     setGoals((prev) => prev.filter((g) => g.id !== id));
-    setGoalEditing((cur) => (cur?.id === id ? null : cur));
+    setGoalEditOpen(false);
+    setGoalEditId((cur) => (cur === id ? null : cur));
+  };
+
+  const openGoalEdit = (g: (typeof goals)[number]) => {
+    setAuthError(null);
+    setGoalEditId(g.id);
+    setGoalEditDraft({ name: g.name, goal_amount: g.goal_amount, balance_amount: g.balance_amount });
+    setGoalEditOpen(true);
+  };
+
+  const saveGoalEdit = () => {
+    if (!goalEditId) return;
+    const name = goalEditDraft.name.trim();
+    if (!name) {
+      setAuthError("Please enter a goal name");
+      return;
+    }
+    setGoals((prev) =>
+      prev.map((g) =>
+        g.id === goalEditId
+          ? { ...g, name, goal_amount: goalEditDraft.goal_amount.trim(), balance_amount: goalEditDraft.balance_amount.trim() }
+          : g,
+      ),
+    );
+    setGoalEditOpen(false);
   };
 
   const [activePage, setActivePage] = useState<ActivePage>("dashboard");
@@ -911,6 +942,99 @@ export default function Home() {
       setAuthError(e instanceof Error ? e.message : "Failed to delete category");
     } finally {
       setCategoryEditSaving(false);
+    }
+  };
+
+  const [accountInitEditId, setAccountInitEditId] = useState<string | null>(null);
+  const [accountInitRaw, setAccountInitRaw] = useState<string>("");
+  const [accountInitSaving, setAccountInitSaving] = useState(false);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [accountSaving, setAccountSaving] = useState(false);
+  const [accountDeleteId, setAccountDeleteId] = useState<string | null>(null);
+  const [accountDraft, setAccountDraft] = useState<{ name: string; opening_balance: string }>({ name: "", opening_balance: "" });
+
+  const beginEditAccountInit = (id: string, opening: number) => {
+    setAuthError(null);
+    setAccountInitEditId(id);
+    setAccountInitRaw(String(opening ?? 0));
+  };
+
+  const cancelEditAccountInit = () => {
+    setAccountInitEditId(null);
+    setAccountInitRaw("");
+  };
+
+  const commitEditAccountInit = async () => {
+    if (!accountInitEditId) return;
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+    const next = Number.parseFloat(accountInitRaw.replace(/[฿,]/g, ""));
+    if (!Number.isFinite(next)) return;
+
+    setAccountInitSaving(true);
+    setAuthError(null);
+    try {
+      const { data, error } = await supabase
+        .from("accounts")
+        .update({ opening_balance: next })
+        .eq("id", accountInitEditId)
+        .eq("user_id", session.user.id)
+        .select("id,name,opening_balance,archived")
+        .single();
+      if (error) throw error;
+      const opening_balance = (data as any).opening_balance as number;
+      setAccounts((prev) => prev.map((a) => (a.id === accountInitEditId ? ({ ...a, opening_balance } as any) : a)));
+      cancelEditAccountInit();
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Failed to update initial amount");
+    } finally {
+      setAccountInitSaving(false);
+    }
+  };
+
+  const openAccount = () => {
+    setAuthError(null);
+    setAccountDraft({ name: "", opening_balance: "" });
+    setAccountOpen(true);
+  };
+
+  const saveAccount = async () => {
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+    setAuthError(null);
+    setAccountSaving(true);
+    try {
+      const name = accountDraft.name.trim();
+      if (!name) throw new Error("Please enter an account name");
+      const opening_balance = Number.parseFloat(accountDraft.opening_balance.replace(/[฿,]/g, ""));
+      if (!Number.isFinite(opening_balance)) throw new Error("Initial amount must be a number");
+
+      const payload = { user_id: session.user.id, name, opening_balance, currency: "THB", archived: false };
+      const { data, error } = await supabase.from("accounts").insert(payload).select("id,name,opening_balance,archived").single();
+      if (error) throw error;
+      setAccounts((prev) => [...prev, data as AccountRow]);
+      setAccountOpen(false);
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Failed to add account");
+    } finally {
+      setAccountSaving(false);
+    }
+  };
+
+  const deleteAccount = async (id: string) => {
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+    setAuthError(null);
+    setAccountSaving(true);
+    try {
+      const { error } = await supabase.from("accounts").update({ archived: true }).eq("id", id).eq("user_id", session.user.id);
+      if (error) throw error;
+      setAccounts((prev) => prev.filter((a) => a.id !== id));
+      setAccountDeleteId(null);
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Failed to delete account");
+    } finally {
+      setAccountSaving(false);
     }
   };
 
@@ -2516,6 +2640,83 @@ export default function Home() {
             </div>
           )}
 
+          {goalEditOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+                <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                  <div className="text-sm font-semibold text-white">Edit goal</div>
+                  <div className="flex items-center gap-2">
+                    {goalEditId && (
+                      <button
+                        type="button"
+                        onClick={() => deleteGoal(goalEditId)}
+                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-xs font-medium text-[#ff5555] hover:bg-white/[0.04]`}
+                      >
+                        Delete
+                      </button>
+                    )}
+                    <button
+                      onClick={() => setGoalEditOpen(false)}
+                      className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-3 p-3.5">
+                  <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Name</label>
+                    <input
+                      value={goalEditDraft.name}
+                      onChange={(e) => setGoalEditDraft((d) => ({ ...d, name: e.target.value }))}
+                      placeholder="e.g. House"
+                      className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Balance</label>
+                      <input
+                        value={goalEditDraft.balance_amount}
+                        onChange={(e) => setGoalEditDraft((d) => ({ ...d, balance_amount: e.target.value }))}
+                        placeholder="0.00"
+                        inputMode="decimal"
+                        className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                      />
+                    </div>
+                    <div>
+                      <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Goal</label>
+                      <input
+                        value={goalEditDraft.goal_amount}
+                        onChange={(e) => setGoalEditDraft((d) => ({ ...d, goal_amount: e.target.value }))}
+                        placeholder="0.00"
+                        inputMode="decimal"
+                        className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className={`flex items-center justify-end gap-2 border-t ${frameBorder} px-3.5 py-2.5`}>
+                  <button
+                    onClick={() => setGoalEditOpen(false)}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveGoalEdit}
+                    className="rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111]"
+                  >
+                    Save changes
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {categoryOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
               <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
@@ -2883,56 +3084,25 @@ export default function Home() {
                           const pct = goalValue > 0 ? Math.max(0, Math.min(1, balanceValue / goalValue)) : 0;
                           const remaining = Math.max(0, goalValue - balanceValue);
 
-                          const isEditing = (field: "name" | "goal" | "balance") =>
-                            goalEditing?.id === g.id && goalEditing.field === field;
-
                           return (
                             <div key={g.id} className={`rounded border ${frameBorder} bg-black px-3 py-2`}>
                               <div className="flex items-center justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-start gap-2">
-                                    {isEditing("name") ? (
-                                      <input
-                                        value={g.name}
-                                        onChange={(e) =>
-                                          setGoals((prev) => prev.map((x) => (x.id === g.id ? { ...x, name: e.target.value } : x)))
-                                        }
-                                        onBlur={() => setGoalEditing(null)}
-                                        onKeyDown={(e) => {
-                                          if (e.key === "Enter" || e.key === "Escape") setGoalEditing(null);
-                                        }}
-                                        className={`w-full rounded border ${frameBorder} bg-black px-2 py-1 text-sm text-white outline-none focus:border-[#444747]`}
-                                        autoFocus
-                                      />
-                                    ) : (
                                     <button
                                       type="button"
-                                      onClick={() => setGoalEditing({ id: g.id, field: "name" })}
-                                      onDoubleClick={() => setGoalEditing({ id: g.id, field: "balance" })}
+                                      onClick={() => openGoalEdit(g)}
                                       className={`truncate text-left text-sm font-semibold ${itemNameColor} hover:text-white`}
-                                      title="Click to edit name (double-click to edit balance)"
+                                      title="Click to edit"
                                     >
                                       {g.name}
                                     </button>
-                                    )}
                                   </div>
                                   <div className="mt-0.5 whitespace-nowrap text-[13px] font-semibold text-[#00CCCC]">
                                     {fmt(balanceValue)}
                                     <span className={`ml-1 text-[11px] font-medium ${headingColor}`}>{`/ ${fmt(goalValue)}`}</span>
                                   </div>
                                 </div>
-
-                                {isEditing("name") && (
-                                  <button
-                                    type="button"
-                                    onMouseDown={(e) => e.preventDefault()}
-                                    onClick={() => deleteGoal(g.id)}
-                                    className={`shrink-0 rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] text-[#ff5555] hover:bg-white/[0.04]`}
-                                    title="Delete goal"
-                                  >
-                                    Delete
-                                  </button>
-                                )}
                               </div>
 
                               <div className="mt-1 h-1.5 rounded bg-white/10">
@@ -2943,25 +3113,6 @@ export default function Home() {
                                 <span>{`${Math.round(pct * 100)}%`}</span>
                                 <span>{`${fmt(remaining)} remaining`}</span>
                               </div>
-
-                              {isEditing("balance") && (
-                                <div className="mt-1 flex justify-end">
-                                  <input
-                                    value={g.balance_amount}
-                                    onChange={(e) =>
-                                      setGoals((prev) =>
-                                        prev.map((x) => (x.id === g.id ? { ...x, balance_amount: e.target.value } : x)),
-                                      )
-                                    }
-                                    onBlur={() => setGoalEditing(null)}
-                                    onKeyDown={(e) => {
-                                      if (e.key === "Enter" || e.key === "Escape") setGoalEditing(null);
-                                    }}
-                                    className={`w-[160px] rounded border ${frameBorder} bg-black px-2 py-1 text-right text-[11px] text-white outline-none focus:border-[#444747]`}
-                                    autoFocus
-                                  />
-                                </div>
-                              )}
                             </div>
                           );
                         })}
@@ -3177,12 +3328,22 @@ export default function Home() {
               </div>
 
               <div className={panelClass}>
-                <div className={panelHeaderClass}>Accounts</div>
+                <div className={panelHeaderClass}>
+                  <span>Accounts</span>
+                  <button
+                    type="button"
+                    onClick={openAccount}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    + Account
+                  </button>
+                </div>
                 <div className="overflow-x-auto">
                   <table className="w-full border-collapse">
                     <thead>
                       <tr className={tableHeadRowClass}>
                         <th className="px-2.5 py-2 text-left font-normal">Account</th>
+                        <th className="px-2.5 py-2 text-right font-normal">Initial Amount</th>
                         <th className="px-2.5 py-2 text-right font-normal">Balance</th>
                         <th className="px-2.5 py-2 text-right font-normal">Total expense (month)</th>
                         <th className="px-2.5 py-2 text-right font-normal">Last updated</th>
@@ -3197,7 +3358,54 @@ export default function Home() {
                         const last = lastChangeDateByAccountId.get(a.id);
                         return (
                           <tr key={a.id} className={`border-b ${frameBorder} last:border-0`}>
-                            <td className={`px-2.5 py-2.5 ${itemNameColor}`}>{a.name}</td>
+                            <td className={`px-2.5 py-2.5 ${itemNameColor}`}>
+                              <div className="flex items-center justify-between gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setAccountDeleteId((cur) => (cur === a.id ? null : a.id))}
+                                  className="text-left hover:text-white"
+                                  title="Click to show delete"
+                                >
+                                  {a.name}
+                                </button>
+                                {accountDeleteId === a.id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => deleteAccount(a.id)}
+                                    disabled={accountSaving}
+                                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium text-[#ff5555] hover:bg-white/[0.04] disabled:opacity-60`}
+                                  >
+                                    Delete
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>
+                              {accountInitEditId === a.id ? (
+                                <input
+                                  value={accountInitRaw}
+                                  onChange={(e) => setAccountInitRaw(e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") commitEditAccountInit();
+                                    if (e.key === "Escape") cancelEditAccountInit();
+                                  }}
+                                  onBlur={() => commitEditAccountInit()}
+                                  disabled={accountInitSaving}
+                                  placeholder="0.00"
+                                  className={`w-[120px] rounded border ${frameBorder} bg-black px-2 py-1 text-right text-[11px] text-white outline-none focus:border-[#444747] disabled:opacity-60`}
+                                  autoFocus
+                                />
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => beginEditAccountInit(a.id, a.opening_balance)}
+                                  className="text-white hover:text-[#00CCCC]"
+                                  title="Click to edit initial amount"
+                                >
+                                  {fmt(a.opening_balance)}
+                                </button>
+                              )}
+                            </td>
                             <td className="px-2.5 py-2.5 text-right text-white">{fmt(bal)}</td>
                             <td className="px-2.5 py-2.5 text-right text-[#ff5555]">{monthAccExpense === 0 ? "—" : fmt(monthAccExpense)}</td>
                             <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>{last ? formatLongDate(last) : "—"}</td>
@@ -3208,6 +3416,60 @@ export default function Home() {
                   </table>
                 </div>
               </div>
+
+              {accountOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+                  <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+                    <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                      <div className="text-sm font-semibold text-white">Add account</div>
+                      <button
+                        onClick={() => setAccountOpen(false)}
+                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    <div className="space-y-3 p-3.5">
+                      <div>
+                        <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Account</label>
+                        <input
+                          value={accountDraft.name}
+                          onChange={(e) => setAccountDraft((d) => ({ ...d, name: e.target.value }))}
+                          placeholder="e.g. Kasikorn"
+                          className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                        />
+                      </div>
+                      <div>
+                        <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Initial Amount</label>
+                        <input
+                          value={accountDraft.opening_balance}
+                          onChange={(e) => setAccountDraft((d) => ({ ...d, opening_balance: e.target.value }))}
+                          placeholder="0.00"
+                          inputMode="decimal"
+                          className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                        />
+                      </div>
+                    </div>
+
+                    <div className={`flex items-center justify-end gap-2 border-t ${frameBorder} px-3.5 py-2.5`}>
+                      <button
+                        onClick={() => setAccountOpen(false)}
+                        className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={saveAccount}
+                        disabled={accountSaving}
+                        className="rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111] disabled:opacity-50"
+                      >
+                        {accountSaving ? "Saving…" : "Save account"}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               <div className={panelClass}>
                 <div className={panelHeaderClass}>Transfers</div>
