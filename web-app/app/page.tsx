@@ -263,6 +263,13 @@ export default function Home() {
     x: number;
     y: number;
   } | null>(null);
+  const [hoveredExpenseDonut, setHoveredExpenseDonut] = useState<{
+    label: string;
+    amount: number;
+    color: string;
+    x: number;
+    y: number;
+  } | null>(null);
 
   const [budgetTotalOverrideOpen, setBudgetTotalOverrideOpen] = useState(false);
   const [budgetTotalOverrideRaw, setBudgetTotalOverrideRaw] = useState<string>("");
@@ -2102,7 +2109,20 @@ export default function Home() {
               ].join(" ");
 
               return (
-                <path key={`${s.label}-${start}`} d={d} fill={s.color} opacity={0.92} stroke="#000" strokeWidth={1} />
+                <path
+                  key={`${s.label}-${start}`}
+                  d={d}
+                  fill={s.color}
+                  opacity={0.92}
+                  stroke="#000"
+                  strokeWidth={1}
+                  onMouseMove={(e) => {
+                    const x = Math.min(window.innerWidth - 16, e.clientX + 14);
+                    const y = Math.min(window.innerHeight - 16, e.clientY + 14);
+                    setHoveredExpenseDonut({ label: s.label, amount: s.amount, color: s.color, x, y });
+                  }}
+                  onMouseLeave={() => setHoveredExpenseDonut(null)}
+                />
               );
             });
           })()
@@ -2114,7 +2134,12 @@ export default function Home() {
 
         <div className="flex flex-col items-center gap-3">
           <div className="relative" style={{ width: size, height: size }}>
-            <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+            <svg
+              width={size}
+              height={size}
+              viewBox={`0 0 ${size} ${size}`}
+              onMouseLeave={() => setHoveredExpenseDonut(null)}
+            >
               <circle cx={cx} cy={cy} r={rOuter} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={rOuter - rInner} />
               {total > 0 ? arcs : null}
               <circle cx={cx} cy={cy} r={rInner - 1} fill="#000" />
@@ -4079,7 +4104,7 @@ export default function Home() {
               <div className={`rounded border ${frameBorder} bg-[#141414] px-2.5 py-2`}><div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Income</div><div className="text-[15px] text-white">{fmt(totalIncome)}</div></div>
                 <div className={`rounded border ${frameBorder} bg-[#141414] px-2.5 py-2`}><div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Spent</div><div className="text-[15px] text-[#ff5555]">{fmt(totalSpent)}</div></div>
                 <div className={`rounded border ${frameBorder} bg-[#141414] px-2.5 py-2`}><div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Net</div><div className="text-[15px] text-[#ff5555]">{fmt(totalIncome - totalSpent)}</div></div>
-                <div className={`rounded border ${frameBorder} bg-[#141414] px-2.5 py-2`}><div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Bills</div><div className="text-[15px] text-white">{paidCount}/{billsMonthly.length}</div></div>
+                <div className={`rounded border ${frameBorder} bg-[#141414] px-2.5 py-2`}><div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>All assets</div><div className="text-[15px] text-[#00CCCC]">{fmt(totalAccountBalance)}</div></div>
               </div>
 
               <div className="grid gap-[10px] lg:grid-cols-[1fr_1.15fr_0.85fr]">
@@ -4194,13 +4219,16 @@ export default function Home() {
                   <div className={panelClass}>
                     <div className={dashPanelHeaderClass}>
                       <span>Bills</span>
-                      <button
-                        type="button"
-                        onClick={openBill}
-                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
-                      >
-                        + Bill
-                      </button>
+                      <div className="flex items-center gap-2">
+                        <div className={`text-[11px] font-semibold ${headingColor}`}>{`${paidCount}/${billsMonthly.length}`}</div>
+                        <button
+                          type="button"
+                          onClick={openBill}
+                          className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                        >
+                          + Bill
+                        </button>
+                      </div>
                     </div>
                     <div className="grid gap-[10px] px-2.5 py-2">
                       {billsMonthly.map((bill, i) => (
@@ -4252,7 +4280,6 @@ export default function Home() {
                       {budgetCards.map((b) => {
                         const rem = b.budget - b.spent;
                         const pct = b.budget > 0 ? Math.min(b.spent / b.budget, 1) : 0;
-                        const over85 = pct >= 0.85;
                         const fillColor = resolveExpenseCategoryDisplayColor(b.category);
                         return (
                           <div
@@ -4265,9 +4292,7 @@ export default function Home() {
                                 <CategoryIcon name={b.category.name} />
                                 <span>{b.category.name}</span>
                               </div>
-                              <div className={`text-sm ${b.spent === 0 ? "text-[#00CCCC]" : "text-[#ff5555]"}`}>
-                                {b.spent === 0 ? "—" : fmt(b.spent)}
-                              </div>
+                              <div className={`text-sm ${b.spent === 0 ? "text-[#00CCCC]" : "text-[#ff5555]"}`}>{b.spent === 0 ? "—" : fmt(b.spent)}</div>
                             </div>
                             <div className={`mt-1 flex justify-between text-xs ${headingColor}`}>
                               <span>Budget {b.budget === 0 ? "—" : fmt(b.budget)}</span>
@@ -4801,6 +4826,7 @@ export default function Home() {
                 })()}
               </div>
             )}
+
             </div>
           )}
 
@@ -4914,6 +4940,19 @@ export default function Home() {
                   </table>
                 </div>
               </div>
+            </div>
+          )}
+
+          {hoveredExpenseDonut && (
+            <div
+              className={`pointer-events-none fixed z-50 w-fit max-w-[280px] rounded border ${frameBorder} bg-black px-3 py-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.55)]`}
+              style={{ left: hoveredExpenseDonut.x, top: hoveredExpenseDonut.y }}
+            >
+              <div className="flex items-center gap-2">
+                <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: hoveredExpenseDonut.color }} />
+                <div className={`text-xs uppercase tracking-[0.5px] ${itemNameColor}`}>{hoveredExpenseDonut.label}</div>
+              </div>
+              <div className="mt-1 text-sm font-semibold text-[#ff5555]">{fmt(hoveredExpenseDonut.amount)}</div>
             </div>
           )}
         </section>
