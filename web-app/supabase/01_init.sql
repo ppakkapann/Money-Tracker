@@ -124,11 +124,14 @@ create table if not exists public.bills_monthly (
   due_date date,
   amount numeric(14,2) not null check (amount >= 0),
   paid boolean not null default false,
+  paid_at date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint bills_monthly_user_month_template_unique unique (user_id, month, template_id),
   constraint bills_monthly_user_month_recurrence_unique unique (user_id, month, recurrence_id)
 );
+
+alter table public.bills_monthly add column if not exists paid_at date;
 
 -- Month-scoped category settings (e.g. hide category for a specific month)
 create table if not exists public.category_month_settings (

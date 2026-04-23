@@ -44,6 +44,7 @@ type BillMonthlyRow = {
   due_date: string | null; // yyyy-mm-dd
   amount: number;
   paid: boolean;
+  paid_at?: string | null; // yyyy-mm-dd (date when status changed to Paid)
 };
 
 type TransactionRow = {
@@ -235,6 +236,14 @@ type ActivePage = (typeof pageOrder)[number];
 const fmt = (n: number) =>
   `฿${n.toLocaleString("en", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
+const todayIsoLocal = () => {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+};
+
 const frameBorder = "border-[#2a2a2a]";
 const panelClass = `overflow-hidden rounded border ${frameBorder} bg-black`;
 const headingColor = "text-[#898989]";
@@ -266,6 +275,14 @@ export default function Home() {
   const [hoveredExpenseDonut, setHoveredExpenseDonut] = useState<{
     label: string;
     amount: number;
+    color: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const [hoveredBudgetRemainingDonut, setHoveredBudgetRemainingDonut] = useState<{
+    label: string;
+    amount: number;
+    budget: number;
     color: string;
     x: number;
     y: number;
@@ -1396,6 +1413,9 @@ export default function Home() {
   const [billConfirmMode, setBillConfirmMode] = useState<"create" | "edit">("create");
   const [billDeleteConfirmOpen, setBillDeleteConfirmOpen] = useState(false);
   const [billClearAllConfirmOpen, setBillClearAllConfirmOpen] = useState(false);
+  const [billPaidConfirmOpen, setBillPaidConfirmOpen] = useState(false);
+  const [billPaidConfirmIndex, setBillPaidConfirmIndex] = useState<number | null>(null);
+  const [billPaidConfirmNextPaid, setBillPaidConfirmNextPaid] = useState<boolean>(true);
   const [billDraft, setBillDraft] = useState<{
     name: string;
     account_id: string;
@@ -1845,7 +1865,7 @@ export default function Home() {
           supabase.from("category_month_settings").select("id,month,category_id,hidden").eq("user_id", session.user.id).eq("month", monthKey),
           supabase
             .from("bills_monthly")
-            .select("id,month,template_id,recurrence_id,name,account_id,due_date,amount,paid")
+            .select("id,month,template_id,recurrence_id,name,account_id,due_date,amount,paid,paid_at")
             .eq("user_id", session.user.id)
             .eq("month", monthKey)
             .order("due_date")
@@ -1946,6 +1966,30 @@ export default function Home() {
     return Number.isFinite(n) && n > 0 ? n : null;
   }, [budgetTotalOverrideRaw]);
   const budgetShareDenominator = budgetTotalOverrideValue ?? budgetCardsTotal;
+
+  const budgetRemainingSegments = useMemo(() => {
+    return budgetCards
+      .map((b) => {
+        const remaining = Math.max(0, b.budget - b.spent);
+        return {
+          label: b.category.name,
+          amount: remaining,
+          budget: b.budget,
+          color: resolveExpenseCategoryDisplayColor(b.category),
+        };
+      })
+      .filter((s) => s.amount > 0);
+  }, [budgetCards]);
+
+  const budgetRemainingTotal = useMemo(
+    () => budgetRemainingSegments.reduce((s, x) => s + x.amount, 0),
+    [budgetRemainingSegments],
+  );
+
+  const budgetRemainingTotalForTable = useMemo(
+    () => budgetCards.reduce((s, b) => s + Math.max(0, b.budget - b.spent), 0),
+    [budgetCards],
+  );
 
   const beginEditBudget = (categoryId: string, currentAmount: number) => {
     setBudgetEditCategoryId(categoryId);
@@ -2178,6 +2222,105 @@ export default function Home() {
     );
   };
 
+  const BudgetRemainingDonutChart = ({
+    segments,
+    total,
+  }: {
+    segments: { label: string; amount: number; budget: number; color: string }[];
+    total: number;
+  }) => {
+    const size = 220;
+    const cx = size / 2;
+    const cy = size / 2;
+    const rOuter = 84;
+    const rInner = 54;
+
+    const arcs =
+      total > 0
+        ? (() => {
+            let angle = 0;
+            return segments.map((s) => {
+              const sweep = (s.amount / total) * 360;
+              const start = angle;
+              const end = angle + sweep;
+              angle = end;
+
+              const outerStart = polarToCartesian(cx, cy, rOuter, start);
+              const outerEnd = polarToCartesian(cx, cy, rOuter, end);
+              const innerEnd = polarToCartesian(cx, cy, rInner, end);
+              const innerStart = polarToCartesian(cx, cy, rInner, start);
+
+              const largeArc = sweep <= 180 ? 0 : 1;
+
+              const d = [
+                `M ${outerStart.x} ${outerStart.y}`,
+                `A ${rOuter} ${rOuter} 0 ${largeArc} 1 ${outerEnd.x} ${outerEnd.y}`,
+                `L ${innerEnd.x} ${innerEnd.y}`,
+                `A ${rInner} ${rInner} 0 ${largeArc} 0 ${innerStart.x} ${innerStart.y}`,
+                "Z",
+              ].join(" ");
+
+              return (
+                <path
+                  key={`${s.label}-${start}`}
+                  d={d}
+                  fill={s.color}
+                  opacity={0.92}
+                  stroke="#000"
+                  strokeWidth={1}
+                  onMouseMove={(e) => {
+                    const x = Math.min(window.innerWidth - 16, e.clientX + 14);
+                    const y = Math.min(window.innerHeight - 16, e.clientY + 14);
+                    setHoveredBudgetRemainingDonut({ label: s.label, amount: s.amount, budget: s.budget, color: s.color, x, y });
+                  }}
+                  onMouseLeave={() => setHoveredBudgetRemainingDonut(null)}
+                />
+              );
+            });
+          })()
+        : [];
+
+    return (
+      <div className="px-2.5 py-2">
+        <div className="flex items-center gap-4">
+          <div className="shrink-0">
+            <div className="relative" style={{ width: size, height: size }}>
+              <svg
+                width={size}
+                height={size}
+                viewBox={`0 0 ${size} ${size}`}
+                onMouseLeave={() => setHoveredBudgetRemainingDonut(null)}
+              >
+                <circle cx={cx} cy={cy} r={rOuter} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={rOuter - rInner} />
+                {total > 0 ? arcs : null}
+                <circle cx={cx} cy={cy} r={rInner - 1} fill="#000" />
+              </svg>
+
+              <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
+                <div className="text-[17px] font-semibold text-white">{fmt(total)}</div>
+              </div>
+            </div>
+          </div>
+
+          <div className="min-w-0 flex-1">
+            {segments.length === 0 ? (
+              <div className={`text-sm ${headingColor}`}>No remaining budget this month.</div>
+            ) : (
+              <div className="grid gap-y-2">
+                {segments.map((s) => (
+                  <div key={s.label} className="flex min-w-0 items-center gap-2">
+                    <span className="inline-block h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: s.color }} />
+                    <span className={`min-w-0 truncate text-sm ${itemNameColor}`}>{s.label}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const paidCount = billsMonthly.filter((b) => b.paid).length;
   const unpaidCount = billsMonthly.length - paidCount;
   const billsTotal = billsMonthly.reduce((sum, b) => sum + b.amount, 0);
@@ -2285,22 +2428,38 @@ export default function Home() {
     });
   };
 
-  const toggleBill = async (index: number) => {
+  const requestToggleBillPaid = (index: number) => {
+    const row = billsMonthly[index];
+    if (!row) return;
+    setAuthError(null);
+    setBillPaidConfirmIndex(index);
+    setBillPaidConfirmNextPaid(!row.paid);
+    setBillPaidConfirmOpen(true);
+  };
+
+  const commitToggleBillPaid = async () => {
+    const index = billPaidConfirmIndex;
+    if (index == null) return;
     const row = billsMonthly[index];
     if (!row || !session?.user?.id) return;
     if (!supabase) return;
 
-    const nextPaid = !row.paid;
-    setBillsMonthly((prev) => prev.map((b, i) => (i === index ? { ...b, paid: nextPaid } : b)));
+    const nextPaid = billPaidConfirmNextPaid;
+    const nextPaidAt = nextPaid ? todayIsoLocal() : null;
+
+    setBillPaidConfirmOpen(false);
+    setBillsMonthly((prev) =>
+      prev.map((b, i) => (i === index ? { ...b, paid: nextPaid, paid_at: nextPaidAt } : b)),
+    );
 
     const { error } = await supabase
       .from("bills_monthly")
-      .update({ paid: nextPaid })
+      .update({ paid: nextPaid, paid_at: nextPaidAt })
       .eq("id", row.id)
       .eq("user_id", session.user.id);
 
     if (error) {
-      setBillsMonthly((prev) => prev.map((b, i) => (i === index ? { ...b, paid: row.paid } : b)));
+      setBillsMonthly((prev) => prev.map((b, i) => (i === index ? { ...b, paid: row.paid, paid_at: row.paid_at ?? null } : b)));
       setAuthError(error.message);
     }
   };
@@ -2434,8 +2593,6 @@ export default function Home() {
       <aside className={`hidden w-[180px] shrink-0 flex-col border-r ${frameBorder} bg-black sm:flex lg:w-[150px]`}>
         <div className={`border-b ${frameBorder} px-3.5 py-2 text-xs font-medium leading-[1.5] tracking-[0.7px] text-[#00CCCC]`}>
           MONEY TRACKER
-          <br />
-          2026
         </div>
         <nav className="flex-1 py-1">
           {pageOrder.map((page) => (
@@ -4098,6 +4255,43 @@ export default function Home() {
             </div>
           )}
 
+          {billPaidConfirmOpen && billPaidConfirmIndex != null && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+                <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                  <div className="text-sm font-semibold text-white">
+                    {billPaidConfirmNextPaid ? "Did you pay?" : "Mark as unpaid?"}
+                  </div>
+                  <button
+                    onClick={() => setBillPaidConfirmOpen(false)}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-2 p-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setBillPaidConfirmOpen(false)}
+                    className={`w-full rounded border ${frameBorder} bg-white/[0.02] px-3 py-3 text-left text-sm font-medium text-white hover:bg-white/[0.04]`}
+                  >
+                    No
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await commitToggleBillPaid();
+                    }}
+                    className="w-full rounded bg-[#00CCCC] px-3 py-3 text-left text-sm font-semibold text-[#111]"
+                  >
+                    Yes
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {activePage === "dashboard" && (
             <>
               <div className="mb-[10px] grid gap-[10px] sm:grid-cols-2 lg:grid-cols-4">
@@ -4246,10 +4440,16 @@ export default function Home() {
                                 {bill.name} • {fmt(bill.amount)}
                               </div>
                               <div className={`mt-0.5 text-xs ${headingColor}`}>Due {bill.due_date ? formatLongDate(bill.due_date) : "—"}</div>
+                              <div className={`mt-0.5 text-xs ${headingColor}`}>
+                                Paid{" "}
+                                <span className={bill.paid && bill.paid_at ? "text-[#00CCCC]" : "text-white/40"}>
+                                  {bill.paid && bill.paid_at ? formatLongDate(bill.paid_at) : "—"}
+                                </span>
+                              </div>
                             </div>
                             <div className="shrink-0 text-right">
                               <button
-                                onClick={() => toggleBill(i)}
+                                onClick={() => requestToggleBillPaid(i)}
                                 className={`mt-1 rounded px-2 py-0.5 text-xs ${
                                   bill.paid ? "bg-[#00CCCC]/10 text-[#00CCCC]" : "bg-[#ff5555]/10 text-[#ff5555]"
                                 }`}
@@ -4315,6 +4515,12 @@ export default function Home() {
                 </div>
 
                 <div className="flex flex-col gap-[10px]">
+                  <div className={panelClass}>
+                    <div className={dashPanelHeaderClass}>
+                      <span>Budget remaining</span>
+                    </div>
+                    <BudgetRemainingDonutChart segments={budgetRemainingSegments} total={budgetRemainingTotal} />
+                  </div>
                   <div className={panelClass}>
                     <div className={dashPanelHeaderClass}>Expenses</div>
                     <div className="px-2.5 py-2">
@@ -4574,7 +4780,15 @@ export default function Home() {
                             </button>
                           </td>
                           <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>
-                            {bill.due_date ? formatLongDate(bill.due_date) : "—"}
+                            <div className="flex flex-col items-end leading-tight">
+                              <div>{bill.due_date ? formatLongDate(bill.due_date) : "—"}</div>
+                              <div className={`mt-0.5 text-[11px] ${headingColor}`}>
+                                PAID{" "}
+                                <span className={bill.paid && bill.paid_at ? "text-[#00CCCC]" : "text-white/40"}>
+                                  {bill.paid && bill.paid_at ? formatLongDate(bill.paid_at) : "—"}
+                                </span>
+                              </div>
+                            </div>
                           </td>
                           <td className="px-2.5 py-2.5 text-right">
                             <input
@@ -4585,7 +4799,7 @@ export default function Home() {
                           </td>
                           <td className="px-2.5 py-2.5 text-right">
                             <button
-                              onClick={() => toggleBill(i)}
+                              onClick={() => requestToggleBillPaid(i)}
                               className={`rounded px-2 py-0.5 text-xs ${
                                 bill.paid ? "bg-[#00CCCC]/10 text-[#00CCCC]" : "bg-[#ff5555]/10 text-[#ff5555]"
                               }`}
@@ -4755,7 +4969,11 @@ export default function Home() {
                           </button>
                         )}
                       </td>
-                      <td colSpan={5} />
+                      <td />
+                      <td className="px-2.5 py-2 text-right">
+                        <div className="text-[11px] text-white">{fmt(budgetRemainingTotalForTable)}</div>
+                      </td>
+                      <td colSpan={3} />
                     </tr>
                     {budgetTotalOverrideOpen && (
                       <tr>
@@ -4781,7 +4999,9 @@ export default function Home() {
                             </button>
                           </div>
                         </td>
-                        <td colSpan={5} />
+                        <td />
+                        <td />
+                        <td colSpan={3} />
                       </tr>
                     )}
                   </tfoot>
@@ -4953,6 +5173,20 @@ export default function Home() {
                 <div className={`text-xs uppercase tracking-[0.5px] ${itemNameColor}`}>{hoveredExpenseDonut.label}</div>
               </div>
               <div className="mt-1 text-sm font-semibold text-[#ff5555]">{fmt(hoveredExpenseDonut.amount)}</div>
+            </div>
+          )}
+
+          {hoveredBudgetRemainingDonut && (
+            <div
+              className={`pointer-events-none fixed z-50 w-fit max-w-[280px] rounded border ${frameBorder} bg-black px-3 py-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.55)]`}
+              style={{ left: hoveredBudgetRemainingDonut.x, top: hoveredBudgetRemainingDonut.y }}
+            >
+              <div className="flex items-center gap-2">
+                <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: hoveredBudgetRemainingDonut.color }} />
+                <div className={`text-xs uppercase tracking-[0.5px] ${itemNameColor}`}>{hoveredBudgetRemainingDonut.label}</div>
+              </div>
+              <div className="mt-1 text-sm font-semibold text-white">{fmt(hoveredBudgetRemainingDonut.amount)}</div>
+              <div className={`mt-0.5 text-[11px] ${headingColor}`}>{`Budget ${fmt(hoveredBudgetRemainingDonut.budget)}`}</div>
             </div>
           )}
         </section>
