@@ -366,6 +366,7 @@ export default function Home() {
   const [monthIndex, setMonthIndex] = useState(3);
   const [year, setYear] = useState(2026);
   const monthKey = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
+  const [monthLoading, setMonthLoading] = useState(false);
 
   const clampDueDateForMonth = (mKey: string, dueDay: number) => {
     const yyyy = Number(mKey.slice(0, 4));
@@ -1734,20 +1735,11 @@ export default function Home() {
 
     // Bill templates are intentionally not used. Bills are created ad-hoc and can be repeated via recurrence_id.
 
-    // Ensure budgets exist for the current selected month (monthKey).
-    // We upsert to avoid duplicates (unique: user_id, month, category_id).
-    const budgetHead = await supabase
-      .from("budgets")
-      .select("id", { count: "exact", head: true })
-      .eq("user_id", session.user.id)
-      .eq("month", monthKey);
-    if (budgetHead.error) throw budgetHead.error;
-
     // Budgets are created per-category when user adds categories (no budget templates).
   };
 
   // ---------------------------------------------------------------------------
-  // Data loading by month
+  // Base data loading (accounts/categories/transactions)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!session?.user?.id) return;
@@ -1758,7 +1750,7 @@ export default function Home() {
       try {
         await ensureUserDefaults();
 
-        const [acctRes, catRes, budgetRes, txRes, catMonthRes] = await Promise.all([
+        const [acctRes, catRes, txRes] = await Promise.all([
           supabase
             .from("accounts")
             .select("id,name,opening_balance,color,archived")
@@ -1772,31 +1764,53 @@ export default function Home() {
             .eq("archived", false)
             .order("kind")
             .order("name"),
-          supabase.from("budgets").select("id,month,category_id,amount").eq("user_id", session.user.id).eq("month", monthKey),
           supabase.from("transactions").select("*").eq("user_id", session.user.id),
-          supabase.from("category_month_settings").select("id,month,category_id,hidden").eq("user_id", session.user.id).eq("month", monthKey),
         ]);
 
         if (acctRes.error) throw acctRes.error;
         if (catRes.error) throw catRes.error;
-        if (budgetRes.error) throw budgetRes.error;
         if (txRes.error) throw txRes.error;
-        if (catMonthRes.error) throw catMonthRes.error;
 
         setAccounts((acctRes.data ?? []) as AccountRow[]);
         setCategories((catRes.data ?? []) as CategoryRow[]);
-        setBudgets((budgetRes.data ?? []) as BudgetRow[]);
         setTransactions((txRes.data ?? []) as TransactionRow[]);
-        setCategoryMonthSettings((catMonthRes.data ?? []) as CategoryMonthSettingRow[]);
+      } catch (e) {
+        setAuthError(e instanceof Error ? e.message : "Failed to load data");
+      }
+    })();
+  }, [session?.user?.id, supabase]);
 
-        const billsRes = await supabase
-          .from("bills_monthly")
-          .select("id,month,template_id,recurrence_id,name,account_id,due_date,amount,paid")
-          .eq("user_id", session.user.id)
-          .eq("month", monthKey)
-          .order("due_date")
-          .order("name");
+  // ---------------------------------------------------------------------------
+  // Month-scoped data loading (budgets/bills/category-month settings)
+  // ---------------------------------------------------------------------------
+  useEffect(() => {
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+
+    let cancelled = false;
+    (async () => {
+      setAuthError(null);
+      setMonthLoading(true);
+      try {
+        const [budgetRes, catMonthRes, billsRes] = await Promise.all([
+          supabase.from("budgets").select("id,month,category_id,amount").eq("user_id", session.user.id).eq("month", monthKey),
+          supabase.from("category_month_settings").select("id,month,category_id,hidden").eq("user_id", session.user.id).eq("month", monthKey),
+          supabase
+            .from("bills_monthly")
+            .select("id,month,template_id,recurrence_id,name,account_id,due_date,amount,paid")
+            .eq("user_id", session.user.id)
+            .eq("month", monthKey)
+            .order("due_date")
+            .order("name"),
+        ]);
+
+        if (budgetRes.error) throw budgetRes.error;
+        if (catMonthRes.error) throw catMonthRes.error;
         if (billsRes.error) throw billsRes.error;
+
+        if (cancelled) return;
+        setBudgets((budgetRes.data ?? []) as BudgetRow[]);
+        setCategoryMonthSettings((catMonthRes.data ?? []) as CategoryMonthSettingRow[]);
         setBillsMonthly(
           ((billsRes.data ?? []) as BillMonthlyRow[]).sort((a, b) => {
             const da = a.due_date ?? "9999-99-99";
@@ -1809,9 +1823,15 @@ export default function Home() {
           }),
         );
       } catch (e) {
-        setAuthError(e instanceof Error ? e.message : "Failed to load data");
+        if (!cancelled) setAuthError(e instanceof Error ? e.message : "Failed to load data");
+      } finally {
+        if (!cancelled) setMonthLoading(false);
       }
     })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [monthKey, session?.user?.id, supabase]);
 
   // ---------------------------------------------------------------------------
@@ -2433,6 +2453,11 @@ export default function Home() {
         </div>
 
         <section className="flex-1 overflow-y-auto p-3.5">
+          {monthLoading && (
+            <div className={`mb-[10px] rounded border ${frameBorder} bg-black px-3 py-2 text-sm ${headingColor}`}>
+              Loading…
+            </div>
+          )}
           {authError && (
             <div className={`mb-[10px] rounded border ${frameBorder} bg-black px-3 py-2 text-sm text-[#ff5555]`}>
               {authError}
