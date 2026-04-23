@@ -17,7 +17,7 @@ values
   (null, 'Shopping',          '#b59b63', 'expense', false),
   (null, 'Entertainment',     '#b06a86', 'expense', false),
   (null, 'Savings',           '#6b98a3', 'expense', false),
-  (null, 'Others',            '#8a77a6', 'expense', false)
+  (null, 'Other',             '#8a77a6', 'expense', false)
 on conflict do nothing;
 
 -- Bill templates: intentionally not seeded (no templates)

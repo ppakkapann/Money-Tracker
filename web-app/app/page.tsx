@@ -80,22 +80,22 @@ const EXPENSE_CATEGORY_ORDER = [
   "Bills & Utilities",
   "Food & Dining",
   "Housing",
-  "Transportation",
   "Shopping",
   "Entertainment",
+  "Transportation",
   "Savings",
-  "Others",
+  "Other",
 ] as const;
 
 const EXPENSE_CATEGORY_COLORS: Record<(typeof EXPENSE_CATEGORY_ORDER)[number], string> = {
   "Bills & Utilities": "#4A2E2E",
   "Food & Dining": "#3E4A2E",
   Housing: "#2E374A",
-  Transportation: "#3D3D3D",
   Shopping: "#4A432E",
   Entertainment: "#4A2E3F",
+  Transportation: "#3D3D3D",
   Savings: "#2E414A",
-  Others: "#362E4A",
+  Other: "#362E4A",
 };
 
 /** Monthly budget defaults (THB) from reference. */
@@ -103,22 +103,22 @@ const DEFAULT_BUDGETS_THB: Record<(typeof EXPENSE_CATEGORY_ORDER)[number], numbe
   "Bills & Utilities": 6600,
   "Food & Dining": 7000,
   Housing: 4000,
-  Transportation: 800,
   Shopping: 5000,
   Entertainment: 2000,
+  Transportation: 800,
   Savings: 10000,
-  Others: 3600,
+  Other: 3600,
 };
 
 const CATEGORY_ICONS: Record<(typeof EXPENSE_CATEGORY_ORDER)[number], string> = {
   "Bills & Utilities": "receipt",
   "Food & Dining": "food",
   Housing: "home",
-  Transportation: "car",
   Shopping: "cart",
   Entertainment: "music",
+  Transportation: "car",
   Savings: "wallet",
-  Others: "dots",
+  Other: "dots",
 };
 
 function expenseCategorySortKey(name: string): number {
@@ -274,16 +274,18 @@ export default function Home() {
   const [goalOpen, setGoalOpen] = useState(false);
   const [goalEditOpen, setGoalEditOpen] = useState(false);
   const [goalEditId, setGoalEditId] = useState<string | null>(null);
-  const [goalEditDraft, setGoalEditDraft] = useState<{ name: string; goal_amount: string; balance_amount: string }>({
+  const [goalEditDraft, setGoalEditDraft] = useState<{ name: string; goal_amount: string; balance_amount: string; color: string }>({
     name: "",
     goal_amount: "",
     balance_amount: "",
+    color: "#103544",
   });
-  const [goals, setGoals] = useState<Array<{ id: string; name: string; goal_amount: string; balance_amount: string }>>([]);
-  const [goalAddDraft, setGoalAddDraft] = useState<{ name: string; goal_amount: string; balance_amount: string }>({
+  const [goals, setGoals] = useState<Array<{ id: string; name: string; goal_amount: string; balance_amount: string; color?: string }>>([]);
+  const [goalAddDraft, setGoalAddDraft] = useState<{ name: string; goal_amount: string; balance_amount: string; color: string }>({
     name: "",
     goal_amount: "",
     balance_amount: "",
+    color: "#103544",
   });
 
   // Persist savings goals locally (no DB table yet)
@@ -301,8 +303,9 @@ export default function Home() {
                   const name = typeof g.name === "string" ? g.name : "";
                   const goal_amount = typeof g.goal_amount === "string" ? g.goal_amount : "";
                   const balance_amount = typeof g.balance_amount === "string" ? g.balance_amount : "";
+                  const color = typeof (g as any).color === "string" ? String((g as any).color) : "#103544";
                   if (!name.trim()) return null;
-                  return { id, name, goal_amount, balance_amount };
+                  return { id, name, goal_amount, balance_amount, color };
                 })
                 .filter(Boolean)
             : null;
@@ -317,7 +320,7 @@ export default function Home() {
       const name = typeof parsedSingle.name === "string" ? parsedSingle.name : "";
       const goal_amount = typeof parsedSingle.goal_amount === "string" ? parsedSingle.goal_amount : "";
       const balance_amount = typeof parsedSingle.balance_amount === "string" ? parsedSingle.balance_amount : "";
-      if (name.trim()) setGoals([{ id: "legacy-0", name, goal_amount, balance_amount }]);
+      if (name.trim()) setGoals([{ id: "legacy-0", name, goal_amount, balance_amount, color: "#103544" }]);
     } catch {
       // ignore
     }
@@ -341,7 +344,7 @@ export default function Home() {
   const openGoalEdit = (g: (typeof goals)[number]) => {
     setAuthError(null);
     setGoalEditId(g.id);
-    setGoalEditDraft({ name: g.name, goal_amount: g.goal_amount, balance_amount: g.balance_amount });
+    setGoalEditDraft({ name: g.name, goal_amount: g.goal_amount, balance_amount: g.balance_amount, color: g.color ?? "#103544" });
     setGoalEditOpen(true);
   };
 
@@ -355,7 +358,7 @@ export default function Home() {
     setGoals((prev) =>
       prev.map((g) =>
         g.id === goalEditId
-          ? { ...g, name, goal_amount: goalEditDraft.goal_amount.trim(), balance_amount: goalEditDraft.balance_amount.trim() }
+          ? { ...g, name, goal_amount: goalEditDraft.goal_amount.trim(), balance_amount: goalEditDraft.balance_amount.trim(), color: goalEditDraft.color }
           : g,
       ),
     );
@@ -838,8 +841,9 @@ export default function Home() {
   const [categoryDraft, setCategoryDraft] = useState<{ name: string; monthly_budget: string; color: string }>({
     name: "",
     monthly_budget: "",
-    color: "#6A687D",
+    color: "#103544",
   });
+  const [categoryAddScope, setCategoryAddScope] = useState<"this_month" | "all_future">("all_future");
   const [categoryBadgeMode, setCategoryBadgeMode] = useState<"preset" | "custom">("preset");
   const presetBadges = useMemo(
     () =>
@@ -906,6 +910,20 @@ export default function Home() {
         });
         return row;
       }
+      // If user picks a new color via +Category, keep it in sync (helps avoid pie chart color collisions).
+      if ((existing.data as any).color !== color) {
+        const updated = await supabase
+          .from("categories")
+          .update({ color })
+          .eq("id", existing.data.id)
+          .eq("user_id", session.user.id)
+          .select("id,name,color,kind,archived")
+          .single();
+        if (updated.error) throw updated.error;
+        const row = updated.data as CategoryRow;
+        setCategories((prev) => prev.map((c) => (c.id === row.id ? row : c)));
+        return row;
+      }
       return existing.data as CategoryRow;
     }
 
@@ -919,7 +937,8 @@ export default function Home() {
 
   const openCategory = () => {
     setAuthError(null);
-    setCategoryDraft({ name: "", monthly_budget: "", color: "#6A687D" });
+    setCategoryDraft({ name: "", monthly_budget: "", color: "#103544" });
+    setCategoryAddScope("all_future");
     setCategoryBadgeMode("preset");
     setCategoryOpen(true);
   };
@@ -936,16 +955,30 @@ export default function Home() {
       if (!Number.isFinite(budgetAmount) || budgetAmount < 0) throw new Error("Monthly budget must be 0 or more");
 
       const categoryName = categoryDraft.name.trim();
-      const color =
-        categoryBadgeMode === "preset"
-          ? ((EXPENSE_CATEGORY_COLORS as Record<string, string>)[categoryName] ?? "#00CCCC")
-          : (categoryDraft.color?.trim() ? categoryDraft.color.trim() : "#6A687D");
+      const color = categoryDraft.color?.trim() ? categoryDraft.color.trim() : "#103544";
 
       const cat = await ensureExpenseCategoryExists({ name: categoryName, color });
       if (!cat) throw new Error("Failed to create category");
 
       // If user previously "deleted this month", make sure it shows again when adding.
       await setCategoryHiddenForMonth({ categoryId: cat.id, mKey: monthKey, hidden: false });
+
+      // Scope behavior
+      const months: string[] = [];
+      for (let i = 1; i <= 24; i++) months.push(addMonthsToKey(monthKey, i));
+      if (months.length) {
+        if (categoryAddScope === "this_month") {
+          // Hide in future months
+          const rows = months.map((m) => ({ user_id: session.user.id, month: m, category_id: cat.id, hidden: true }));
+          const { error } = await supabase.from("category_month_settings").upsert(rows as any, { onConflict: "user_id,month,category_id" });
+          if (error) throw error;
+        } else {
+          // Ensure visible in future months (clear any previous hidden flags)
+          const rows = months.map((m) => ({ user_id: session.user.id, month: m, category_id: cat.id, hidden: false }));
+          const { error } = await supabase.from("category_month_settings").upsert(rows as any, { onConflict: "user_id,month,category_id" });
+          if (error) throw error;
+        }
+      }
 
       // create/update budget for this month
       const budgetPayload = {
@@ -1733,6 +1766,14 @@ export default function Home() {
       );
     }
 
+    // Back-compat: earlier seed used "Others" but UI expects "Other"
+    await supabase
+      .from("categories")
+      .update({ name: "Other" })
+      .eq("user_id", session.user.id)
+      .eq("kind", "expense")
+      .eq("name", "Others");
+
     // Bill templates are intentionally not used. Bills are created ad-hoc and can be repeated via recurrence_id.
 
     // Budgets are created per-category when user adds categories (no budget templates).
@@ -2199,7 +2240,7 @@ export default function Home() {
       ["Food & Dining", "฿7,000", "18%", "฿521", "฿6,479", "฿720", "฿3,240", "#00CCCC"],
       ["Housing", "฿4,000", "10%", "฿0", "฿4,000", "฿444", "฿2,000", "#f472b6"],
       ["Savings", "฿10,000", "26%", "฿0", "฿10,000", "฿1,111", "฿5,000", "#2dd4bf"],
-      ["Others", "฿3,600", "9%", "฿0", "฿3,600", "฿400", "฿1,800", "#6b7280"],
+      ["Other", "฿3,600", "9%", "฿0", "฿3,600", "฿400", "฿1,800", "#6b7280"],
     ],
     [],
   );
@@ -3094,6 +3135,38 @@ export default function Home() {
                     />
                   </div>
 
+                  <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Color</label>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {[
+                        { label: "Teal", value: "#103544" },
+                        { label: "Rose", value: "#441933" },
+                        { label: "Sand", value: "#5e4f2a" },
+                        { label: "Brick", value: "#561e1e" },
+                        { label: "Olive", value: "#2d510a" },
+                        { label: "Violet", value: "#37154c" },
+                      ].map((c) => {
+                        const sel = (goalAddDraft.color || "").toLowerCase() === c.value.toLowerCase();
+                        return (
+                          <button
+                            key={c.value}
+                            type="button"
+                            onClick={() => setGoalAddDraft((d) => ({ ...d, color: c.value }))}
+                            className={`rounded border px-2.5 py-1.5 text-[11px] font-medium ${
+                              sel ? "border-[#444747] bg-black text-white" : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
+                            }`}
+                            title={c.value}
+                          >
+                            <span className="inline-flex items-center gap-2">
+                              <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value }} />
+                              <span>{c.label}</span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Goal amount</label>
@@ -3143,6 +3216,7 @@ export default function Home() {
                           name,
                           goal_amount: goalAddDraft.goal_amount.trim(),
                           balance_amount: goalAddDraft.balance_amount.trim(),
+                          color: goalAddDraft.color,
                         },
                       ]);
                       setGoalOpen(false);
@@ -3262,14 +3336,13 @@ export default function Home() {
                       {[
                         { label: "None", value: "" },
                         { label: "Navy", value: "#102033" },
-                        { label: "Olive", value: "#1e261d" },
-                        { label: "Slate", value: "#141414" },
                         { label: "Teal", value: "#022d29" },
-                            { label: "Pine", value: "#5A7060" },
-                            { label: "Fern", value: "#3F5B4F" },
-                            { label: "Creek", value: "#2D4A3D" },
-                            { label: "Moss", value: "#1E3C30" },
-                            { label: "Spruce", value: "#0F2F25" },
+                        { label: "Olive", value: "#1e261d" },
+                        { label: "Underworld", value: "#23231b" },
+                        { label: "Wine", value: "#1e1d28" },
+                        { label: "Wood", value: "#191010" },
+                        { label: "Carob", value: "#19170b" },
+                        { label: "Gray", value: "#161616" },
                       ].map((c) => {
                         const sel = accountDraft.color === c.value;
                         return (
@@ -3289,12 +3362,6 @@ export default function Home() {
                         );
                       })}
                     </div>
-                    <input
-                      value={accountDraft.color}
-                      onChange={(e) => setAccountDraft((d) => ({ ...d, color: e.target.value }))}
-                      placeholder="#102033"
-                      className={`mt-2 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
-                    />
                   </div>
                   <div>
                     <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Initial Amount</label>
@@ -3356,14 +3423,13 @@ export default function Home() {
                       {[
                         { label: "None", value: "" },
                         { label: "Navy", value: "#102033" },
-                        { label: "Olive", value: "#1e261d" },
-                        { label: "Slate", value: "#141414" },
                         { label: "Teal", value: "#022d29" },
-                            { label: "Pine", value: "#5A7060" },
-                            { label: "Fern", value: "#3F5B4F" },
-                            { label: "Creek", value: "#2D4A3D" },
-                            { label: "Moss", value: "#1E3C30" },
-                            { label: "Spruce", value: "#0F2F25" },
+                        { label: "Olive", value: "#1e261d" },
+                        { label: "Underworld", value: "#23231b" },
+                        { label: "Wine", value: "#1e1d28" },
+                        { label: "Wood", value: "#191010" },
+                        { label: "Carob", value: "#19170b" },
+                        { label: "Gray", value: "#161616" },
                       ].map((c) => {
                         const sel = accountEditDraft.color === c.value;
                         return (
@@ -3383,12 +3449,6 @@ export default function Home() {
                         );
                       })}
                     </div>
-                    <input
-                      value={accountEditDraft.color}
-                      onChange={(e) => setAccountEditDraft((d) => ({ ...d, color: e.target.value }))}
-                      placeholder="#102033"
-                      className={`mt-2 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
-                    />
                   </div>
                   <div>
                     <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Initial Amount</label>
@@ -3483,6 +3543,32 @@ export default function Home() {
 
                 <div className="space-y-3 p-3.5">
                   <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Add scope</label>
+                    <div className={`mt-1 flex flex-wrap gap-2`}>
+                      {[
+                        { id: "this_month", label: "This month only" },
+                        { id: "all_future", label: "All future months" },
+                      ].map((o) => {
+                        const sel = categoryAddScope === (o.id as any);
+                        return (
+                          <button
+                            key={o.id}
+                            type="button"
+                            onClick={() => setCategoryAddScope(o.id as any)}
+                            className={`rounded border px-3 py-2 text-left text-sm ${
+                              sel ? "border-[#444747] bg-black text-white" : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
+                            }`}
+                          >
+                            <span className="inline-flex items-center gap-2">
+                              <span className={`inline-block h-2.5 w-2.5 rounded-full border ${sel ? "border-[#00CCCC] bg-[#00CCCC]/20" : "border-white/20 bg-transparent"}`} />
+                              <span>{o.label}</span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                  <div>
                     <div className="mt-0.5 flex flex-wrap gap-2">
                       {presetBadges.map((b) => {
                         const sel = categoryBadgeMode === "preset" && categoryDraft.name === b.name;
@@ -3539,49 +3625,37 @@ export default function Home() {
                         </button>
                       )}
                     </div>
-                    {categoryBadgeMode === "custom" && (
-                      <div className="mt-3">
-                        <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Color</label>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          {[
-                            { label: "Stormy", value: "#6A687D" },
-                            { label: "Foggy", value: "#50586A" },
-                            { label: "Dawn", value: "#3C4658" },
-                            { label: "Air", value: "#293C4F" },
-                            { label: "Shadow", value: "#1F3147" },
-                            { label: "Night", value: "#14273D" },
-                            { label: "Pine", value: "#5A7060" },
-                            { label: "Fern", value: "#3F5B4F" },
-                            { label: "Creek", value: "#2D4A3D" },
-                            { label: "Moss", value: "#1E3C30" },
-                          ].map((c) => {
-                            const sel = (categoryDraft.color || "").toLowerCase() === c.value.toLowerCase();
-                            return (
-                              <button
-                                key={c.value}
-                                type="button"
-                                onClick={() => setCategoryDraft((d) => ({ ...d, color: c.value }))}
-                                className={`rounded border px-2.5 py-1.5 text-[11px] font-medium ${
-                                  sel ? "border-[#444747] bg-black text-white" : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
-                                }`}
-                                title={c.value}
-                              >
-                                <span className="inline-flex items-center gap-2">
-                                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value }} />
-                                  <span>{c.label}</span>
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <input
-                          value={categoryDraft.color}
-                          onChange={(e) => setCategoryDraft((d) => ({ ...d, color: e.target.value }))}
-                          placeholder="#6A687D"
-                          className={`mt-2 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
-                        />
+                    <div className="mt-3">
+                      <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Color</label>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {[
+                          { label: "Teal", value: "#103544" },
+                          { label: "Rose", value: "#441933" },
+                          { label: "Sand", value: "#5e4f2a" },
+                          { label: "Brick", value: "#561e1e" },
+                          { label: "Olive", value: "#2d510a" },
+                          { label: "Violet", value: "#37154c" },
+                        ].map((c) => {
+                          const sel = (categoryDraft.color || "").toLowerCase() === c.value.toLowerCase();
+                          return (
+                            <button
+                              key={c.value}
+                              type="button"
+                              onClick={() => setCategoryDraft((d) => ({ ...d, color: c.value }))}
+                              className={`rounded border px-2.5 py-1.5 text-[11px] font-medium ${
+                                sel ? "border-[#444747] bg-black text-white" : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
+                              }`}
+                              title={c.value}
+                            >
+                              <span className="inline-flex items-center gap-2">
+                                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value }} />
+                                <span>{c.label}</span>
+                              </span>
+                            </button>
+                          );
+                        })}
                       </div>
-                    )}
+                    </div>
                   </div>
                   <div>
                     <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Monthly budget</label>
@@ -4059,7 +4133,7 @@ export default function Home() {
                       type="button"
                       onClick={() => {
                         setAuthError(null);
-                        setGoalAddDraft({ name: "", goal_amount: "", balance_amount: "" });
+                        setGoalAddDraft({ name: "", goal_amount: "", balance_amount: "", color: "#103544" });
                         setGoalOpen(true);
                       }}
                       className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
@@ -4095,7 +4169,7 @@ export default function Home() {
                                       {g.name}
                                     </button>
                                   </div>
-                                  <div className="mt-0.5 whitespace-nowrap text-[13px] font-semibold text-[#00CCCC]">
+                                  <div className="mt-0.5 whitespace-nowrap text-[13px] font-semibold" style={{ color: (g as any).color || "#00CCCC" }}>
                                     {fmt(balanceValue)}
                                     <span className={`ml-1 text-[11px] font-medium ${headingColor}`}>{`/ ${fmt(goalValue)}`}</span>
                                   </div>
@@ -4103,7 +4177,7 @@ export default function Home() {
                               </div>
 
                               <div className="mt-1 h-1.5 rounded bg-white/10">
-                                <div className="h-full rounded bg-[#00CCCC]" style={{ width: `${(pct * 100).toFixed(1)}%` }} />
+                                <div className="h-full rounded" style={{ width: `${(pct * 100).toFixed(1)}%`, backgroundColor: (g as any).color || "#00CCCC" }} />
                               </div>
 
                               <div className={`mt-1.5 flex justify-between text-xs ${headingColor}`}>
@@ -4532,7 +4606,7 @@ export default function Home() {
                       const usedPct = budgetAmt > 0 ? Math.min(spentAmt / budgetAmt, 1) : 0;
                       const usagePctDisplay = budgetAmt > 0 ? usedPct * 100 : null;
                       const warn = usedPct >= 0.85;
-                      const fillClass = warn ? "bg-orange-500" : "bg-[#00CCCC]";
+                      const fillClass = warn ? "bg-[#ff5555]" : "bg-[#00CCCC]";
                       const dot = resolveExpenseCategoryDisplayColor(b.category);
                       const budgetSharePct = budgetShareDenominator > 0 ? (budgetAmt / budgetShareDenominator) * 100 : 0;
                       return (
@@ -4629,7 +4703,7 @@ export default function Home() {
                           {budgetAmt === 0 ? (
                             <span className={headingColor}>—</span>
                           ) : (
-                            <span className={`inline-flex items-center justify-end gap-1.5 text-xs ${warn ? "text-orange-500" : "text-[#00CCCC]"}`}>
+                            <span className={`inline-flex items-center justify-end gap-1.5 text-xs ${warn ? "text-[#ff5555]" : "text-[#00CCCC]"}`}>
                               <span className="inline-block h-1.5 w-1.5 rounded-full bg-current" />
                               <span>{`${fmt(spentAmt)} used`}</span>
                             </span>
