@@ -5,14 +5,7 @@
 begin;
 
 -- Accounts (defaults)
-insert into public.accounts (user_id, name, currency, opening_balance)
-values
-  (null, 'Kasikorn', 'THB', 0),
-  (null, 'Krungsri', 'THB', 0),
-  (null, 'Krungthai', 'THB', 0),
-  (null, 'Bangkok Bank', 'THB', 0),
-  (null, 'Cash', 'THB', 0)
-on conflict do nothing;
+-- Accounts are NOT seeded. Users add accounts themselves.
 
 -- Categories (8 templates) - no budgets are seeded
 insert into public.categories (user_id, name, color, kind, archived)

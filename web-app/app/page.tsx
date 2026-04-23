@@ -8,6 +8,7 @@ type AccountRow = {
   id: string;
   name: string;
   opening_balance: number;
+  color?: string | null;
   archived: boolean;
 };
 
@@ -245,7 +246,7 @@ const tableHeadRowClass = `text-xs font-semibold uppercase tracking-[0.5px] ${he
 const panelHeaderClass =
   `flex items-center justify-between px-2.5 py-2 text-[11px] font-semibold uppercase tracking-[0.55px] ${headingColor}`;
 const dashPanelHeaderClass =
-  `flex items-center justify-between bg-white/[0.02] px-2.5 py-2 text-sm font-semibold tracking-[0.2px] ${headingColor}`;
+  `relative z-20 flex items-center justify-between bg-white/[0.02] px-2.5 py-2 text-sm font-semibold tracking-[0.2px] ${headingColor}`;
 
 const summaryCardClass = `rounded border ${frameBorder} bg-[#141414] px-3 py-2.5`;
 
@@ -278,9 +279,7 @@ export default function Home() {
     goal_amount: "",
     balance_amount: "",
   });
-  const [goals, setGoals] = useState<Array<{ id: string; name: string; goal_amount: string; balance_amount: string }>>([
-    { id: "default", name: "House", goal_amount: "100000", balance_amount: "" },
-  ]);
+  const [goals, setGoals] = useState<Array<{ id: string; name: string; goal_amount: string; balance_amount: string }>>([]);
   const [goalAddDraft, setGoalAddDraft] = useState<{ name: string; goal_amount: string; balance_amount: string }>({
     name: "",
     goal_amount: "",
@@ -315,10 +314,10 @@ export default function Home() {
       const rawSingle = window.localStorage.getItem("mt:savingsGoal");
       if (!rawSingle) return;
       const parsedSingle = JSON.parse(rawSingle) as Partial<{ name: string; goal_amount: string; balance_amount: string }>;
-      const name = typeof parsedSingle.name === "string" ? parsedSingle.name : "House";
-      const goal_amount = typeof parsedSingle.goal_amount === "string" ? parsedSingle.goal_amount : "100000";
+      const name = typeof parsedSingle.name === "string" ? parsedSingle.name : "";
+      const goal_amount = typeof parsedSingle.goal_amount === "string" ? parsedSingle.goal_amount : "";
       const balance_amount = typeof parsedSingle.balance_amount === "string" ? parsedSingle.balance_amount : "";
-      setGoals([{ id: "legacy-0", name, goal_amount, balance_amount }]);
+      if (name.trim()) setGoals([{ id: "legacy-0", name, goal_amount, balance_amount }]);
     } catch {
       // ignore
     }
@@ -546,6 +545,7 @@ export default function Home() {
   const [incomeSaving, setIncomeSaving] = useState(false);
   const [incomeCalendarOpen, setIncomeCalendarOpen] = useState(false);
   const [incomeEditingId, setIncomeEditingId] = useState<string | null>(null);
+  const [incomeDeleteConfirmOpen, setIncomeDeleteConfirmOpen] = useState(false);
   const [incomeDraft, setIncomeDraft] = useState<{
     date: string;
     amount: string;
@@ -569,6 +569,7 @@ export default function Home() {
   const openIncome = () => {
     setAuthError(null);
     setIncomeEditingId(null);
+    setIncomeDeleteConfirmOpen(false);
     setIncomeDraft({
       date: monthDefaultDate,
       amount: "",
@@ -584,6 +585,7 @@ export default function Home() {
     if (tx.type !== "income") return;
     setAuthError(null);
     setIncomeEditingId(tx.id);
+    setIncomeDeleteConfirmOpen(false);
     setIncomeDraft({
       date: tx.date,
       amount: String(tx.amount),
@@ -647,6 +649,7 @@ export default function Home() {
       }
 
       setIncomeOpen(false);
+      setIncomeDeleteConfirmOpen(false);
     } catch (e) {
       setAuthError(e instanceof Error ? e.message : "Failed to save income");
     } finally {
@@ -671,11 +674,18 @@ export default function Home() {
 
       setTransactions((prev) => prev.filter((t) => t.id !== incomeEditingId));
       setIncomeOpen(false);
+      setIncomeDeleteConfirmOpen(false);
     } catch (e) {
       setAuthError(e instanceof Error ? e.message : "Failed to delete income");
     } finally {
       setIncomeSaving(false);
     }
+  };
+
+  const closeIncomeModal = () => {
+    setIncomeOpen(false);
+    setIncomeDeleteConfirmOpen(false);
+    setIncomeCalendarOpen(false);
   };
 
   const [transferOpen, setTransferOpen] = useState(false);
@@ -824,9 +834,10 @@ export default function Home() {
 
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [categorySaving, setCategorySaving] = useState(false);
-  const [categoryDraft, setCategoryDraft] = useState<{ name: string; monthly_budget: string }>({
+  const [categoryDraft, setCategoryDraft] = useState<{ name: string; monthly_budget: string; color: string }>({
     name: "",
     monthly_budget: "",
+    color: "#6A687D",
   });
   const [categoryBadgeMode, setCategoryBadgeMode] = useState<"preset" | "custom">("preset");
   const presetBadges = useMemo(
@@ -846,9 +857,68 @@ export default function Home() {
   const [categoryDeleteConfirmOpen, setCategoryDeleteConfirmOpen] = useState(false);
   const [categoryConfirmBusy, setCategoryConfirmBusy] = useState(false);
 
+  const setCategoryHiddenForMonth = async ({ categoryId, mKey, hidden }: { categoryId: string; mKey: string; hidden: boolean }) => {
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+    const payload = { user_id: session.user.id, month: mKey, category_id: categoryId, hidden };
+    const { data, error } = await supabase
+      .from("category_month_settings")
+      .upsert(payload as any, { onConflict: "user_id,month,category_id" })
+      .select("id,month,category_id,hidden")
+      .single();
+    if (error) throw error;
+    setCategoryMonthSettings((prev) => {
+      const row = data as CategoryMonthSettingRow;
+      const idx = prev.findIndex((r) => r.month === row.month && r.category_id === row.category_id);
+      if (idx === -1) return [...prev, row];
+      return prev.map((r, i) => (i === idx ? row : r));
+    });
+  };
+
+  const ensureExpenseCategoryExists = async ({ name, color }: { name: string; color: string }) => {
+    if (!session?.user?.id) return null;
+    if (!supabase) return null;
+    // Try to find existing category (including archived)
+    const existing = await supabase
+      .from("categories")
+      .select("id,name,color,kind,archived")
+      .eq("user_id", session.user.id)
+      .eq("kind", "expense")
+      .eq("name", name)
+      .maybeSingle();
+    if (existing.error) throw existing.error;
+    if (existing.data) {
+      if (existing.data.archived) {
+        const revived = await supabase
+          .from("categories")
+          .update({ archived: false, color })
+          .eq("id", existing.data.id)
+          .eq("user_id", session.user.id)
+          .select("id,name,color,kind,archived")
+          .single();
+        if (revived.error) throw revived.error;
+        const row = revived.data as CategoryRow;
+        setCategories((prev) => {
+          const idx = prev.findIndex((c) => c.id === row.id);
+          if (idx === -1) return [...prev, row];
+          return prev.map((c, i) => (i === idx ? row : c));
+        });
+        return row;
+      }
+      return existing.data as CategoryRow;
+    }
+
+    const payload = { user_id: session.user.id, name, color, kind: "expense" as const, archived: false };
+    const created = await supabase.from("categories").insert(payload).select("id,name,color,kind,archived").single();
+    if (created.error) throw created.error;
+    const row = created.data as CategoryRow;
+    setCategories((prev) => [...prev, row]);
+    return row;
+  };
+
   const openCategory = () => {
     setAuthError(null);
-    setCategoryDraft({ name: "", monthly_budget: "" });
+    setCategoryDraft({ name: "", monthly_budget: "", color: "#6A687D" });
     setCategoryBadgeMode("preset");
     setCategoryOpen(true);
   };
@@ -866,25 +936,21 @@ export default function Home() {
 
       const categoryName = categoryDraft.name.trim();
       const color =
-        (EXPENSE_CATEGORY_COLORS as Record<string, string>)[categoryName] ??
-        "#00CCCC";
+        categoryBadgeMode === "preset"
+          ? ((EXPENSE_CATEGORY_COLORS as Record<string, string>)[categoryName] ?? "#00CCCC")
+          : (categoryDraft.color?.trim() ? categoryDraft.color.trim() : "#6A687D");
 
-      const payload = {
-        user_id: session.user.id,
-        name: categoryName,
-        color,
-        kind: "expense" as const,
-        archived: false,
-      };
-      const { data, error } = await supabase.from("categories").insert(payload).select("id,name,color,kind,archived").single();
-      if (error) throw error;
-      setCategories((prev) => [...prev, data as CategoryRow]);
+      const cat = await ensureExpenseCategoryExists({ name: categoryName, color });
+      if (!cat) throw new Error("Failed to create category");
+
+      // If user previously "deleted this month", make sure it shows again when adding.
+      await setCategoryHiddenForMonth({ categoryId: cat.id, mKey: monthKey, hidden: false });
 
       // create/update budget for this month
       const budgetPayload = {
         user_id: session.user.id,
         month: monthKey,
-        category_id: (data as any).id as string,
+        category_id: cat.id,
         amount: budgetAmount,
       };
       const { data: bData, error: bErr } = await supabase
@@ -1063,57 +1129,30 @@ export default function Home() {
     }
   };
 
-  const [accountInitEditId, setAccountInitEditId] = useState<string | null>(null);
-  const [accountInitRaw, setAccountInitRaw] = useState<string>("");
-  const [accountInitSaving, setAccountInitSaving] = useState(false);
   const [accountOpen, setAccountOpen] = useState(false);
   const [accountSaving, setAccountSaving] = useState(false);
-  const [accountDeleteId, setAccountDeleteId] = useState<string | null>(null);
-  const [accountDraft, setAccountDraft] = useState<{ name: string; opening_balance: string }>({ name: "", opening_balance: "" });
+  const [accountDraft, setAccountDraft] = useState<{ name: string; opening_balance: string; color: string }>({ name: "", opening_balance: "", color: "" });
 
-  const beginEditAccountInit = (id: string, opening: number) => {
-    setAuthError(null);
-    setAccountInitEditId(id);
-    setAccountInitRaw(String(opening ?? 0));
-  };
-
-  const cancelEditAccountInit = () => {
-    setAccountInitEditId(null);
-    setAccountInitRaw("");
-  };
-
-  const commitEditAccountInit = async () => {
-    if (!accountInitEditId) return;
-    if (!session?.user?.id) return;
-    if (!supabase) return;
-    const next = Number.parseFloat(accountInitRaw.replace(/[฿,]/g, ""));
-    if (!Number.isFinite(next)) return;
-
-    setAccountInitSaving(true);
-    setAuthError(null);
-    try {
-      const { data, error } = await supabase
-        .from("accounts")
-        .update({ opening_balance: next })
-        .eq("id", accountInitEditId)
-        .eq("user_id", session.user.id)
-        .select("id,name,opening_balance,archived")
-        .single();
-      if (error) throw error;
-      const opening_balance = (data as any).opening_balance as number;
-      setAccounts((prev) => prev.map((a) => (a.id === accountInitEditId ? ({ ...a, opening_balance } as any) : a)));
-      cancelEditAccountInit();
-    } catch (e) {
-      setAuthError(e instanceof Error ? e.message : "Failed to update initial amount");
-    } finally {
-      setAccountInitSaving(false);
-    }
-  };
+  const [accountEditOpen, setAccountEditOpen] = useState(false);
+  const [accountEditId, setAccountEditId] = useState<string | null>(null);
+  const [accountEditDraft, setAccountEditDraft] = useState<{ name: string; opening_balance: string; color: string }>({ name: "", opening_balance: "", color: "" });
+  const [accountDeleteConfirmOpen, setAccountDeleteConfirmOpen] = useState(false);
 
   const openAccount = () => {
     setAuthError(null);
-    setAccountDraft({ name: "", opening_balance: "" });
+    setAccountDraft({ name: "", opening_balance: "", color: "" });
     setAccountOpen(true);
+  };
+
+  const closeAccountModal = () => {
+    setAccountOpen(false);
+    setAccountDeleteConfirmOpen(false);
+  };
+
+  const closeAccountEditModal = () => {
+    setAccountEditOpen(false);
+    setAccountEditId(null);
+    setAccountDeleteConfirmOpen(false);
   };
 
   const saveAccount = async () => {
@@ -1127,11 +1166,61 @@ export default function Home() {
       const opening_balance = Number.parseFloat(accountDraft.opening_balance.replace(/[฿,]/g, ""));
       if (!Number.isFinite(opening_balance)) throw new Error("Initial amount must be a number");
 
-      const payload = { user_id: session.user.id, name, opening_balance, currency: "THB", archived: false };
-      const { data, error } = await supabase.from("accounts").insert(payload).select("id,name,opening_balance,archived").single();
-      if (error) throw error;
-      setAccounts((prev) => [...prev, data as AccountRow]);
-      setAccountOpen(false);
+      // Some environments may not have accounts.color yet. Try with color, then fallback without.
+      const payloadWithColor: any = { user_id: session.user.id, name, opening_balance, color: accountDraft.color || null, currency: "THB", archived: false };
+      let row: any = null;
+      const first = await supabase.from("accounts").insert(payloadWithColor).select("id,name,opening_balance,archived").single();
+      if (first.error) {
+        const msg = String((first.error as any).message ?? "");
+        // If the name already exists, it may be an archived account. Restore instead of failing.
+        if (msg.toLowerCase().includes("duplicate key") || msg.toLowerCase().includes("accounts_name_user_unique")) {
+          const existing = await supabase
+            .from("accounts")
+            .select("id,archived")
+            .eq("user_id", session.user.id)
+            .eq("name", name)
+            .maybeSingle();
+          if (existing.error) throw existing.error;
+          if (existing.data?.id && existing.data.archived) {
+            const color = accountDraft.color?.trim() ? accountDraft.color.trim() : null;
+            const tryRestore = async (withColor: boolean) => {
+              const updateBase: any = { opening_balance, archived: false };
+              if (withColor) updateBase.color = color;
+              const q = supabase.from("accounts").update(updateBase).eq("id", existing.data!.id).eq("user_id", session.user.id);
+              const res = withColor
+                ? await q.select("id,name,opening_balance,archived,color").single()
+                : await q.select("id,name,opening_balance,archived").single();
+              if (res.error) throw res.error;
+              return res.data;
+            };
+            try {
+              row = await tryRestore(true);
+            } catch (e) {
+              const emsg = e instanceof Error ? e.message : String(e);
+              if (emsg.toLowerCase().includes("color")) row = await tryRestore(false);
+              else throw e;
+            }
+          } else {
+            throw first.error;
+          }
+        } else if (msg.toLowerCase().includes("color")) {
+          const payloadNoColor: any = { user_id: session.user.id, name, opening_balance, currency: "THB", archived: false };
+          const second = await supabase.from("accounts").insert(payloadNoColor).select("id,name,opening_balance,archived").single();
+          if (second.error) throw second.error;
+          row = second.data;
+        } else {
+          throw first.error;
+        }
+      } else {
+        row = first.data;
+      }
+
+      setAccounts((prev) => {
+        const idx = prev.findIndex((a) => a.id === (row as any).id);
+        if (idx >= 0) return prev.map((a) => (a.id === (row as any).id ? ({ ...a, ...(row as any) } as any) : a));
+        return [...prev, row as AccountRow];
+      });
+      closeAccountModal();
     } catch (e) {
       setAuthError(e instanceof Error ? e.message : "Failed to add account");
     } finally {
@@ -1148,13 +1237,115 @@ export default function Home() {
       const { error } = await supabase.from("accounts").update({ archived: true }).eq("id", id).eq("user_id", session.user.id);
       if (error) throw error;
       setAccounts((prev) => prev.filter((a) => a.id !== id));
-      setAccountDeleteId(null);
     } catch (e) {
       setAuthError(e instanceof Error ? e.message : "Failed to delete account");
     } finally {
       setAccountSaving(false);
     }
   };
+
+  const openAccountEdit = (a: AccountRow) => {
+    setAuthError(null);
+    setAccountEditId(a.id);
+    setAccountEditDraft({
+      name: a.name,
+      opening_balance: String(a.opening_balance ?? 0),
+      color: (a as any).color ? String((a as any).color) : "",
+    });
+    setAccountDeleteConfirmOpen(false);
+    setAccountEditOpen(true);
+  };
+
+  const requestSaveAccountEdit = async () => {
+    if (!accountEditId) return;
+    const name = accountEditDraft.name.trim();
+    if (!name) {
+      setAuthError("Please enter an account name");
+      return;
+    }
+    const dup = accounts.find((a) => a.id !== accountEditId && a.name.trim().toLowerCase() === name.toLowerCase());
+    if (dup) {
+      setAuthError(`Account "${name}" already exists`);
+      return;
+    }
+    const opening_balance = Number.parseFloat(accountEditDraft.opening_balance.replace(/[฿,]/g, ""));
+    if (!Number.isFinite(opening_balance)) {
+      setAuthError("Initial amount must be a number");
+      return;
+    }
+    setAuthError(null);
+    await commitSaveAccountEdit();
+  };
+
+  const commitSaveAccountEdit = async () => {
+    if (!session?.user?.id) return;
+    if (!supabase) return;
+    if (!accountEditId) return;
+    setAuthError(null);
+    setAccountSaving(true);
+    try {
+      const name = accountEditDraft.name.trim();
+      const opening_balance = Number.parseFloat(accountEditDraft.opening_balance.replace(/[฿,]/g, ""));
+      const color = accountEditDraft.color.trim() ? accountEditDraft.color.trim() : null;
+
+      const tryUpdate = async (withColor: boolean) => {
+        const base: any = { name, opening_balance };
+        if (withColor) base.color = color;
+        const q = supabase.from("accounts").update(base).eq("id", accountEditId).eq("user_id", session.user.id);
+        const res = withColor
+          ? await q.select("id,name,opening_balance,color,archived").single()
+          : await q.select("id,name,opening_balance,archived").single();
+        if (res.error) throw res.error;
+        return res.data as AccountRow;
+      };
+
+      let row: AccountRow;
+      try {
+        row = await tryUpdate(true);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.toLowerCase().includes("color")) row = await tryUpdate(false);
+        else throw e;
+      }
+
+      setAccounts((prev) => prev.map((a) => (a.id === accountEditId ? ({ ...a, ...row } as any) : a)));
+      closeAccountEditModal();
+    } catch (e) {
+      const raw =
+        e instanceof Error ? e.message : typeof (e as any)?.message === "string" ? String((e as any).message) : String(e);
+      if (raw.toLowerCase().includes("duplicate key") || raw.toLowerCase().includes("accounts_name_user_unique")) {
+        const name = accountEditDraft.name.trim();
+        try {
+          const existing = await supabase
+            .from("accounts")
+            .select("id,archived")
+            .eq("user_id", session.user.id)
+            .eq("name", name)
+            .maybeSingle();
+          if (existing.data?.archived) {
+            setAuthError(`Account "${name}" already exists (archived). Use + Account to restore it.`);
+          } else {
+            setAuthError(`Account "${name}" already exists`);
+          }
+        } catch {
+          setAuthError(raw);
+        }
+        return;
+      }
+      setAuthError(raw || "Failed to update account");
+    } finally {
+      setAccountSaving(false);
+    }
+  };
+
+  const commitDeleteAccountEdit = async () => {
+    if (!accountEditId) return;
+    const id = accountEditId;
+    await deleteAccount(id);
+    closeAccountEditModal();
+  };
+
+  // (No clear-all button; users delete accounts individually.)
 
   const [billOpen, setBillOpen] = useState(false);
   const [billSaving, setBillSaving] = useState(false);
@@ -1517,48 +1708,27 @@ export default function Home() {
     if (!session?.user?.id) return;
     if (!supabase) return;
 
-    // If user already has accounts/categories/templates, do nothing.
-    const [acctHead, catHead] = await Promise.all([
-      supabase.from("accounts").select("id", { count: "exact", head: true }).eq("user_id", session.user.id),
-      supabase.from("categories").select("id", { count: "exact", head: true }).eq("user_id", session.user.id),
-    ]);
+    // Accounts are NOT seeded/copied. Users add accounts themselves.
 
-    if (acctHead.error) throw acctHead.error;
+    const catHead = await supabase.from("categories").select("id", { count: "exact", head: true }).eq("user_id", session.user.id);
     if (catHead.error) throw catHead.error;
-    const acctCount = acctHead.count ?? 0;
     const catCount = catHead.count ?? 0;
 
-    // Copy default rows
-    const [defaultAccounts, defaultCategories] = await Promise.all([
-      supabase.from("accounts").select("name,currency,opening_balance,archived").is("user_id", null),
-      supabase.from("categories").select("name,color,kind,archived").is("user_id", null),
-    ]);
-
-    if (defaultAccounts.error) throw defaultAccounts.error;
+    // Copy default categories (8 templates, user_id is NULL).
+    const defaultCategories = await supabase.from("categories").select("name,color,kind,archived").is("user_id", null);
     if (defaultCategories.error) throw defaultCategories.error;
 
-    if ((acctCount ?? 0) === 0 && defaultAccounts.data?.length) {
-      await supabase.from("accounts").insert(
-        defaultAccounts.data.map((a) => ({
-          user_id: session.user.id,
-          name: a.name,
-          currency: a.currency,
-          opening_balance: a.opening_balance,
-          archived: a.archived,
-        })),
-      );
-    }
-
-    // Copy default categories (8 templates). Budgets remain month-scoped and default to 0 unless user sets them.
-    if ((catCount ?? 0) === 0 && defaultCategories.data?.length) {
-      await supabase.from("categories").insert(
+    // Ensure the 8 template categories exist (even if user already has some categories).
+    if (defaultCategories.data?.length) {
+      await supabase.from("categories").upsert(
         defaultCategories.data.map((c) => ({
           user_id: session.user.id,
           name: c.name,
           color: c.color,
           kind: c.kind,
           archived: c.archived,
-        })),
+        })) as any,
+        { onConflict: "user_id,kind,name" },
       );
     }
 
@@ -1591,7 +1761,7 @@ export default function Home() {
         const [acctRes, catRes, budgetRes, txRes, catMonthRes] = await Promise.all([
           supabase
             .from("accounts")
-            .select("id,name,opening_balance,archived")
+            .select("id,name,opening_balance,color,archived")
             .eq("user_id", session.user.id)
             .eq("archived", false)
             .order("name"),
@@ -2200,9 +2370,9 @@ export default function Home() {
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
         <div className={`sticky top-0 z-10 flex items-center justify-between border-b ${frameBorder} bg-black/80 px-3.5 py-2 backdrop-blur`}>
-          <div className="flex items-center gap-2" />
+          <div className="pointer-events-none flex items-center gap-2" />
 
-          <div className="absolute left-1/2 flex -translate-x-1/2 items-center gap-2">
+          <div className="pointer-events-auto absolute left-1/2 flex -translate-x-1/2 items-center gap-2">
             <button
               onClick={() => changeMonth(-1)}
               className={`flex h-5 w-5 items-center justify-center rounded border ${frameBorder} bg-white/[0.02] text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
@@ -2217,7 +2387,7 @@ export default function Home() {
               ›
             </button>
           </div>
-          <div className="flex gap-1.5">
+          <div className="pointer-events-auto flex gap-1.5">
             <button onClick={openExpense} className="rounded bg-[#ff5555] px-2.5 py-1 text-sm font-medium text-white">
               + Expense
             </button>
@@ -2484,7 +2654,7 @@ export default function Home() {
                 <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
                   <div className="text-sm font-semibold text-white">{incomeEditingId ? "Edit income" : "Add income"}</div>
                   <button
-                    onClick={() => setIncomeOpen(false)}
+                    onClick={closeIncomeModal}
                     className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
                   >
                     ✕
@@ -2622,7 +2792,7 @@ export default function Home() {
                 <div className={`flex items-center justify-end gap-2 border-t ${frameBorder} px-3.5 py-2.5`}>
                   {incomeEditingId && (
                     <button
-                      onClick={deleteIncome}
+                      onClick={() => setIncomeDeleteConfirmOpen(true)}
                       disabled={incomeSaving}
                       className={`mr-auto rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium text-[#ff5555] hover:bg-white/[0.04] disabled:opacity-50`}
                     >
@@ -2630,7 +2800,7 @@ export default function Home() {
                     </button>
                   )}
                   <button
-                    onClick={() => setIncomeOpen(false)}
+                    onClick={closeIncomeModal}
                     className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
                   >
                     Cancel
@@ -2641,6 +2811,44 @@ export default function Home() {
                     className="rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111] disabled:opacity-50"
                   >
                     {incomeSaving ? "Saving…" : incomeEditingId ? "Save changes" : "Save income"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {incomeDeleteConfirmOpen && incomeEditingId && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+                <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                  <div className="text-sm font-semibold text-white">Delete this income?</div>
+                  <button
+                    onClick={() => setIncomeDeleteConfirmOpen(false)}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-2 p-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setIncomeDeleteConfirmOpen(false)}
+                    disabled={incomeSaving}
+                    className={`w-full rounded border ${frameBorder} bg-white/[0.02] px-3 py-3 text-left text-sm font-medium text-white hover:bg-white/[0.04] disabled:opacity-50`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setIncomeDeleteConfirmOpen(false);
+                      await deleteIncome();
+                    }}
+                    disabled={incomeSaving}
+                    className="w-full rounded bg-[#ff5555] px-3 py-3 text-left text-sm font-semibold text-[#111] disabled:opacity-50"
+                  >
+                    Delete income
                   </button>
                 </div>
               </div>
@@ -2841,7 +3049,7 @@ export default function Home() {
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
               <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
                 <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
-                  <div className="text-sm font-semibold text-white">Add goal</div>
+                  <div className="text-sm font-semibold text-white">Add Goal</div>
                   <button
                     onClick={() => setGoalOpen(false)}
                     className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
@@ -3000,6 +3208,241 @@ export default function Home() {
             </div>
           )}
 
+          {accountOpen && (
+            <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+                <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                  <div className="text-sm font-semibold text-white">Add account</div>
+                  <button
+                    onClick={closeAccountModal}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-3 p-3.5">
+                  <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Account</label>
+                    <input
+                      value={accountDraft.name}
+                      onChange={(e) => setAccountDraft((d) => ({ ...d, name: e.target.value }))}
+                      placeholder="e.g. Kasikorn"
+                      className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Color</label>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {[
+                        { label: "None", value: "" },
+                        { label: "Navy", value: "#102033" },
+                        { label: "Olive", value: "#1e261d" },
+                        { label: "Slate", value: "#141414" },
+                        { label: "Teal", value: "#022d29" },
+                            { label: "Pine", value: "#5A7060" },
+                            { label: "Fern", value: "#3F5B4F" },
+                            { label: "Creek", value: "#2D4A3D" },
+                            { label: "Moss", value: "#1E3C30" },
+                            { label: "Spruce", value: "#0F2F25" },
+                      ].map((c) => {
+                        const sel = accountDraft.color === c.value;
+                        return (
+                          <button
+                            key={c.label}
+                            type="button"
+                            onClick={() => setAccountDraft((d) => ({ ...d, color: c.value }))}
+                            className={`rounded border px-2.5 py-1.5 text-[11px] font-medium ${
+                              sel ? "border-[#444747] bg-black text-white" : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
+                            }`}
+                          >
+                            <span className="inline-flex items-center gap-2">
+                              {c.value ? <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value }} /> : <span className="h-2.5 w-2.5 rounded-full bg-white/10" />}
+                              <span>{c.label}</span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <input
+                      value={accountDraft.color}
+                      onChange={(e) => setAccountDraft((d) => ({ ...d, color: e.target.value }))}
+                      placeholder="#102033"
+                      className={`mt-2 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Initial Amount</label>
+                    <input
+                      value={accountDraft.opening_balance}
+                      onChange={(e) => setAccountDraft((d) => ({ ...d, opening_balance: e.target.value }))}
+                      placeholder="0.00"
+                      inputMode="decimal"
+                      className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                    />
+                  </div>
+                </div>
+
+                <div className={`flex items-center justify-end gap-2 border-t ${frameBorder} px-3.5 py-2.5`}>
+                  <button
+                    onClick={closeAccountModal}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={saveAccount}
+                    disabled={accountSaving}
+                    className="rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111] disabled:opacity-50"
+                  >
+                    {accountSaving ? "Saving…" : "Add"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {accountEditOpen && (
+            <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70 p-4">
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+                <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                  <div className="text-sm font-semibold text-white">Edit account</div>
+                  <button
+                    onClick={closeAccountEditModal}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div className="space-y-3 p-3.5">
+                  <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Account</label>
+                    <input
+                      value={accountEditDraft.name}
+                      onChange={(e) => setAccountEditDraft((d) => ({ ...d, name: e.target.value }))}
+                      placeholder="e.g. Kasikorn"
+                      className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Color</label>
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {[
+                        { label: "None", value: "" },
+                        { label: "Navy", value: "#102033" },
+                        { label: "Olive", value: "#1e261d" },
+                        { label: "Slate", value: "#141414" },
+                        { label: "Teal", value: "#022d29" },
+                            { label: "Pine", value: "#5A7060" },
+                            { label: "Fern", value: "#3F5B4F" },
+                            { label: "Creek", value: "#2D4A3D" },
+                            { label: "Moss", value: "#1E3C30" },
+                            { label: "Spruce", value: "#0F2F25" },
+                      ].map((c) => {
+                        const sel = accountEditDraft.color === c.value;
+                        return (
+                          <button
+                            key={c.label}
+                            type="button"
+                            onClick={() => setAccountEditDraft((d) => ({ ...d, color: c.value }))}
+                            className={`rounded border px-2.5 py-1.5 text-[11px] font-medium ${
+                              sel ? "border-[#444747] bg-black text-white" : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
+                            }`}
+                          >
+                            <span className="inline-flex items-center gap-2">
+                              {c.value ? <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value }} /> : <span className="h-2.5 w-2.5 rounded-full bg-white/10" />}
+                              <span>{c.label}</span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <input
+                      value={accountEditDraft.color}
+                      onChange={(e) => setAccountEditDraft((d) => ({ ...d, color: e.target.value }))}
+                      placeholder="#102033"
+                      className={`mt-2 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                    />
+                  </div>
+                  <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Initial Amount</label>
+                    <input
+                      value={accountEditDraft.opening_balance}
+                      onChange={(e) => setAccountEditDraft((d) => ({ ...d, opening_balance: e.target.value }))}
+                      placeholder="0.00"
+                      inputMode="decimal"
+                      className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                    />
+                  </div>
+                </div>
+
+                <div className={`flex items-center justify-end gap-2 border-t ${frameBorder} px-3.5 py-2.5`}>
+                  <button
+                    type="button"
+                    onClick={() => setAccountDeleteConfirmOpen(true)}
+                    disabled={accountSaving}
+                    className={`mr-auto rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium text-[#ff5555] hover:bg-white/[0.04] disabled:opacity-50`}
+                  >
+                    Delete
+                  </button>
+                  <button
+                    type="button"
+                    onClick={closeAccountEditModal}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={requestSaveAccountEdit}
+                    disabled={accountSaving}
+                    className="rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111] disabled:opacity-50"
+                  >
+                    Save changes
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {accountDeleteConfirmOpen && accountEditId && (
+            <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4">
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+                <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                  <div className="text-sm font-semibold text-white">Would you like to delete it?</div>
+                  <button
+                    onClick={() => setAccountDeleteConfirmOpen(false)}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="space-y-2 p-3.5">
+                  <button
+                    type="button"
+                    onClick={() => setAccountDeleteConfirmOpen(false)}
+                    disabled={accountSaving}
+                    className={`w-full rounded border ${frameBorder} bg-white/[0.02] px-3 py-3 text-left text-sm font-medium text-white hover:bg-white/[0.04] disabled:opacity-50`}
+                  >
+                    No
+                  </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      setAccountDeleteConfirmOpen(false);
+                      await commitDeleteAccountEdit();
+                    }}
+                    disabled={accountSaving}
+                    className="w-full rounded bg-[#ff5555] px-3 py-3 text-left text-sm font-semibold text-[#111] disabled:opacity-50"
+                  >
+                    Yes
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {categoryOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
               <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
@@ -3071,6 +3514,49 @@ export default function Home() {
                         </button>
                       )}
                     </div>
+                    {categoryBadgeMode === "custom" && (
+                      <div className="mt-3">
+                        <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Color</label>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {[
+                            { label: "Stormy", value: "#6A687D" },
+                            { label: "Foggy", value: "#50586A" },
+                            { label: "Dawn", value: "#3C4658" },
+                            { label: "Air", value: "#293C4F" },
+                            { label: "Shadow", value: "#1F3147" },
+                            { label: "Night", value: "#14273D" },
+                            { label: "Pine", value: "#5A7060" },
+                            { label: "Fern", value: "#3F5B4F" },
+                            { label: "Creek", value: "#2D4A3D" },
+                            { label: "Moss", value: "#1E3C30" },
+                          ].map((c) => {
+                            const sel = (categoryDraft.color || "").toLowerCase() === c.value.toLowerCase();
+                            return (
+                              <button
+                                key={c.value}
+                                type="button"
+                                onClick={() => setCategoryDraft((d) => ({ ...d, color: c.value }))}
+                                className={`rounded border px-2.5 py-1.5 text-[11px] font-medium ${
+                                  sel ? "border-[#444747] bg-black text-white" : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
+                                }`}
+                                title={c.value}
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value }} />
+                                  <span>{c.label}</span>
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <input
+                          value={categoryDraft.color}
+                          onChange={(e) => setCategoryDraft((d) => ({ ...d, color: e.target.value }))}
+                          placeholder="#6A687D"
+                          className={`mt-2 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                        />
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Monthly budget</label>
@@ -3500,24 +3986,29 @@ export default function Home() {
               <div className="grid gap-[10px] lg:grid-cols-[1fr_1.15fr_0.85fr]">
                 <div className="flex flex-col gap-[10px]">
                   <div className={panelClass}>
-                    <div className={dashPanelHeaderClass}>Accounts</div>
+                    <div className={dashPanelHeaderClass}>
+                      <span>Accounts</span>
+                      <button
+                        type="button"
+                        onClick={openAccount}
+                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                      >
+                        + Account
+                      </button>
+                    </div>
                     <div className="px-2.5 py-2">
                       <div className="grid grid-cols-2 gap-[10px]">
                         {orderedAccounts.map((a) => {
                           const lastDate = lastChangeDateByAccountId.get(a.id);
-                      const theme =
-                        a.name === "Kasikorn"
-                          ? { bg: "#131912", border: "#517c48" }
-                          : a.name === "Bangkok Bank"
-                            ? { bg: "#091521", border: "#5368c1" }
-                            : null;
+                          const bg = (a as any).color ? ((a as any).color as string) : "#000";
+                          const border = "#444747";
                           return (
                             <div
                               key={a.id}
                           className={`rounded border px-2.5 py-2`}
                           style={{
-                            backgroundColor: theme?.bg ?? "#000",
-                            borderColor: theme?.border ?? "#444747",
+                            backgroundColor: bg,
+                            borderColor: border,
                           }}
                             >
                               <div className={`text-xs uppercase tracking-[0.5px] ${itemNameColor}`}>{a.name}</div>
@@ -3548,7 +4039,7 @@ export default function Home() {
                       }}
                       className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
                     >
-                      + Add goal
+                      + Goal
                     </button>
                   </div>
                     <div className="p-2.5">
@@ -3602,7 +4093,16 @@ export default function Home() {
                   </div>
 
                   <div className={panelClass}>
-                    <div className={dashPanelHeaderClass}>Bills</div>
+                    <div className={dashPanelHeaderClass}>
+                      <span>Bills</span>
+                      <button
+                        type="button"
+                        onClick={openBill}
+                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                      >
+                        + Bill
+                      </button>
+                    </div>
                     <div className="grid gap-[10px] px-2.5 py-2">
                       {billsMonthly.map((bill, i) => (
                         <div
@@ -3639,7 +4139,16 @@ export default function Home() {
 
                 <div className="flex flex-col gap-[10px]">
                   <div className={panelClass}>
-                    <div className={dashPanelHeaderClass}>Budget by Category</div>
+                    <div className={dashPanelHeaderClass}>
+                      <span>Budget by Category</span>
+                      <button
+                        type="button"
+                        onClick={openCategory}
+                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                      >
+                        + Category
+                      </button>
+                    </div>
                     <div className="grid gap-[10px] px-2.5 py-2">
                       {budgetCards.map((b) => {
                         const rem = b.budget - b.spent;
@@ -3840,52 +4349,12 @@ export default function Home() {
                         return (
                           <tr key={a.id} className={`border-b ${frameBorder} last:border-0`}>
                             <td className={`px-2.5 py-2.5 ${itemNameColor}`}>
-                              <div className="flex items-center justify-between gap-2">
-                                <button
-                                  type="button"
-                                  onClick={() => setAccountDeleteId((cur) => (cur === a.id ? null : a.id))}
-                                  className="text-left hover:text-white"
-                                  title="Click to show delete"
-                                >
-                                  {a.name}
-                                </button>
-                                {accountDeleteId === a.id && (
-                                  <button
-                                    type="button"
-                                    onClick={() => deleteAccount(a.id)}
-                                    disabled={accountSaving}
-                                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium text-[#ff5555] hover:bg-white/[0.04] disabled:opacity-60`}
-                                  >
-                                    Delete
-                                  </button>
-                                )}
-                              </div>
+                              <button type="button" onClick={() => openAccountEdit(a)} className="text-left hover:text-white" title="Click to edit account">
+                                {a.name}
+                              </button>
                             </td>
                             <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>
-                              {accountInitEditId === a.id ? (
-                                <input
-                                  value={accountInitRaw}
-                                  onChange={(e) => setAccountInitRaw(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter") commitEditAccountInit();
-                                    if (e.key === "Escape") cancelEditAccountInit();
-                                  }}
-                                  onBlur={() => commitEditAccountInit()}
-                                  disabled={accountInitSaving}
-                                  placeholder="0.00"
-                                  className={`w-[120px] rounded border ${frameBorder} bg-black px-2 py-1 text-right text-[11px] text-white outline-none focus:border-[#444747] disabled:opacity-60`}
-                                  autoFocus
-                                />
-                              ) : (
-                                <button
-                                  type="button"
-                                  onClick={() => beginEditAccountInit(a.id, a.opening_balance)}
-                                  className="text-white hover:text-[#00CCCC]"
-                                  title="Click to edit initial amount"
-                                >
-                                  {fmt(a.opening_balance)}
-                                </button>
-                              )}
+                              <span className="text-white">{fmt(a.opening_balance)}</span>
                             </td>
                             <td className="px-2.5 py-2.5 text-right text-white">{fmt(bal)}</td>
                             <td className="px-2.5 py-2.5 text-right text-[#ff5555]">{monthAccExpense === 0 ? "—" : fmt(monthAccExpense)}</td>
@@ -3897,60 +4366,6 @@ export default function Home() {
                   </table>
                 </div>
               </div>
-
-              {accountOpen && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-                  <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
-                    <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
-                      <div className="text-sm font-semibold text-white">Add account</div>
-                      <button
-                        onClick={() => setAccountOpen(false)}
-                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
-                      >
-                        ✕
-                      </button>
-                    </div>
-
-                    <div className="space-y-3 p-3.5">
-                      <div>
-                        <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Account</label>
-                        <input
-                          value={accountDraft.name}
-                          onChange={(e) => setAccountDraft((d) => ({ ...d, name: e.target.value }))}
-                          placeholder="e.g. Kasikorn"
-                          className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
-                        />
-                      </div>
-                      <div>
-                        <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Initial Amount</label>
-                        <input
-                          value={accountDraft.opening_balance}
-                          onChange={(e) => setAccountDraft((d) => ({ ...d, opening_balance: e.target.value }))}
-                          placeholder="0.00"
-                          inputMode="decimal"
-                          className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
-                        />
-                      </div>
-                    </div>
-
-                    <div className={`flex items-center justify-end gap-2 border-t ${frameBorder} px-3.5 py-2.5`}>
-                      <button
-                        onClick={() => setAccountOpen(false)}
-                        className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={saveAccount}
-                        disabled={accountSaving}
-                        className="rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111] disabled:opacity-50"
-                      >
-                        {accountSaving ? "Saving…" : "Save account"}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
 
               <div className={panelClass}>
                 <div className={panelHeaderClass}>Transfers</div>
