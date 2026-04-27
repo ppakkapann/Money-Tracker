@@ -10,14 +10,14 @@ begin;
 -- Categories (8 templates) - no budgets are seeded
 insert into public.categories (user_id, name, color, kind, archived)
 values
-  (null, 'Bills & Utilities', '#c77d86', 'expense', false),
-  (null, 'Food & Dining',     '#8aa37b', 'expense', false),
-  (null, 'Housing',           '#6b7ea8', 'expense', false),
-  (null, 'Transportation',    '#a7a7a7', 'expense', false),
-  (null, 'Shopping',          '#b59b63', 'expense', false),
-  (null, 'Entertainment',     '#b06a86', 'expense', false),
-  (null, 'Savings',           '#6b98a3', 'expense', false),
-  (null, 'Other',             '#8a77a6', 'expense', false)
+  (null, 'Bills & Utilities', '#E64B5D', 'expense', false),
+  (null, 'Food & Dining',     '#FF8A3D', 'expense', false),
+  (null, 'Housing',           '#4E6BFF', 'expense', false),
+  (null, 'Transportation',    '#60A5FA', 'expense', false),
+  (null, 'Shopping',          '#F2C94C', 'expense', false),
+  (null, 'Entertainment',     '#A855F7', 'expense', false),
+  (null, 'Savings',           '#2DD4BF', 'expense', false),
+  (null, 'Other',             '#22C55E', 'expense', false)
 on conflict do nothing;
 
 -- Bill templates: intentionally not seeded (no templates)

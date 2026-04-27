@@ -1,8 +1,86 @@
 @import "tailwindcss";
 
+/* -------------------------------------------------------------------------- */
+/* Theme tokens (Money Tracker)                                                */
+/* -------------------------------------------------------------------------- */
+/* Default theme is Ocean. Other themes override via data-theme. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Legacy next template vars */
+  --background: #0a0a0a;
+  --foreground: #ededed;
+
+  /* App tokens (Ocean default) */
+  --mt-bg: #050b12;
+  --mt-panel: #050b12;
+  --mt-card: #0e1c2b; /* slightly lighter than bg */
+  --mt-border: #243246;
+  --mt-heading: #9fb0c5;
+  --mt-muted: #6e7f96;
+  --mt-text: #eaf2ff;
+
+  --mt-accent: #4fd1ff; /* primary */
+  --mt-danger: #ff6b9a; /* expense/danger */
+  --mt-on-accent: #071019;
+
+  --mt-hover: rgba(255, 255, 255, 0.04);
+  --mt-hover-soft: rgba(255, 255, 255, 0.02);
+}
+
+html[data-theme="ocean"] {
+  --mt-bg: #050b12;
+  --mt-panel: #050b12;
+  --mt-card: #0e1c2b;
+  --mt-border: #243246;
+  --mt-heading: #9fb0c5;
+  --mt-muted: #6e7f96;
+  --mt-text: #eaf2ff;
+  --mt-accent: #4fd1ff;
+  --mt-danger: #ff6b9a;
+  --mt-on-accent: #071019;
+}
+
+html[data-theme="rose"] {
+  --mt-bg: #0b0608;
+  --mt-panel: #0b0608;
+  --mt-card: #161013;
+  --mt-border: #2a1d23;
+  --mt-heading: #b6a0ab;
+  --mt-muted: #7c6671;
+  --mt-text: #fff3f8;
+  --mt-accent: #ff4fa3;
+  --mt-danger: #ff5a3a;
+  --mt-on-accent: #18060f;
+}
+
+html[data-theme="light"] {
+  --mt-bg: #f7f7f8;
+  --mt-panel: #ffffff;
+  --mt-card: #ffffff;
+  --mt-border: #e5e7eb;
+  --mt-heading: #6b7280;
+  --mt-muted: #374151;
+  --mt-text: #0b0b0c;
+  --mt-accent: #0ea5e9;
+  --mt-danger: #ef4444;
+  --mt-on-accent: #ffffff;
+  --mt-hover: rgba(0, 0, 0, 0.06);
+  --mt-hover-soft: rgba(0, 0, 0, 0.04);
+}
+
+/* White + natural teal/green gradient */
+html[data-theme="mint"] {
+  --mt-bg: linear-gradient(180deg, #f7fffd 0%, #f2fbff 45%, #f6fff7 100%);
+  --mt-panel: rgba(255, 255, 255, 0.78);
+  --mt-card: rgba(255, 255, 255, 0.92);
+  --mt-border: rgba(15, 23, 42, 0.12);
+  --mt-heading: rgba(15, 23, 42, 0.60);
+  --mt-muted: rgba(15, 23, 42, 0.78);
+  --mt-text: #0f172a;
+  --mt-accent: #14b8a6; /* teal */
+  --mt-danger: #f97316; /* warm contrast */
+  --mt-on-accent: #062822;
+  --mt-hover: rgba(15, 23, 42, 0.06);
+  --mt-hover-soft: rgba(15, 23, 42, 0.04);
 }
 
 @theme inline {
@@ -12,15 +90,11 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* Keep the template prefers-color-scheme behavior out of the way.
+   Theme switching is controlled by html[data-theme]. */
 
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--mt-bg);
+  color: var(--mt-text);
   font-family: Arial, Helvetica, sans-serif;
 }

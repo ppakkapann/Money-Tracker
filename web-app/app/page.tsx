@@ -88,15 +88,16 @@ const EXPENSE_CATEGORY_ORDER = [
   "Other",
 ] as const;
 
+// Bright palette (aligned to reference swatches; optimized for contrast on dark Ocean UI)
 const EXPENSE_CATEGORY_COLORS: Record<(typeof EXPENSE_CATEGORY_ORDER)[number], string> = {
-  "Bills & Utilities": "#4A2E2E",
-  "Food & Dining": "#3E4A2E",
-  Housing: "#2E374A",
-  Shopping: "#4A432E",
-  Entertainment: "#4A2E3F",
-  Transportation: "#3D3D3D",
-  Savings: "#2E414A",
-  Other: "#362E4A",
+  "Bills & Utilities": "#E64B5D", // energetic red
+  "Food & Dining": "#FF8A3D", // orange
+  Housing: "#4E6BFF", // blue
+  Shopping: "#F2C94C", // yellow
+  Entertainment: "#A855F7", // purple
+  Transportation: "#60A5FA", // sky blue
+  Savings: "#2DD4BF", // teal
+  Other: "#22C55E", // green
 };
 
 /** Monthly budget defaults (THB) from reference. */
@@ -244,10 +245,10 @@ const todayIsoLocal = () => {
   return `${yyyy}-${mm}-${dd}`;
 };
 
-const frameBorder = "border-[#2a2a2a]";
-const panelClass = `overflow-hidden rounded border ${frameBorder} bg-black`;
-const headingColor = "text-[#898989]";
-const itemNameColor = "text-[#575757]";
+const frameBorder = "border-[color:var(--mt-border)]";
+const panelClass = `overflow-hidden rounded border ${frameBorder} bg-[var(--mt-panel)]`;
+const headingColor = "text-[color:var(--mt-heading)]";
+const itemNameColor = "text-[color:var(--mt-muted)]";
 // Table header row: no bottom border (avoids double-line vs first data row).
 const tableHeadRowClass = `text-xs font-semibold uppercase tracking-[0.5px] ${headingColor}`;
 
@@ -257,7 +258,7 @@ const panelHeaderClass =
 const dashPanelHeaderClass =
   `relative z-20 flex items-center justify-between bg-white/[0.02] px-2.5 py-2 text-sm font-semibold tracking-[0.2px] ${headingColor}`;
 
-const summaryCardClass = `rounded border ${frameBorder} bg-[#141414] px-3 py-2.5`;
+const summaryCardClass = `rounded border ${frameBorder} bg-[var(--mt-card)] px-3 py-2.5`;
 
 export default function Home() {
   const supabase = useMemo(() => supabaseBrowser(), []);
@@ -287,6 +288,20 @@ export default function Home() {
     x: number;
     y: number;
   } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const clear = () => {
+      setHoveredExpenseDonut(null);
+      setHoveredBudgetRemainingDonut(null);
+    };
+    window.addEventListener("blur", clear);
+    window.addEventListener("mouseleave", clear);
+    return () => {
+      window.removeEventListener("blur", clear);
+      window.removeEventListener("mouseleave", clear);
+    };
+  }, []);
 
   const [budgetTotalOverrideOpen, setBudgetTotalOverrideOpen] = useState(false);
   const [budgetTotalOverrideRaw, setBudgetTotalOverrideRaw] = useState<string>("");
@@ -417,7 +432,15 @@ export default function Home() {
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [billsMonthly, setBillsMonthly] = useState<BillMonthlyRow[]>([]);
 
-  const monthDefaultDate = `${monthKey}-01`;
+  const monthDefaultDate = useMemo(() => {
+    const today = todayIsoLocal();
+    return today.startsWith(monthKey) ? today : `${monthKey}-01`;
+  }, [monthKey]);
+
+  const defaultAccountId = useMemo(() => {
+    const kasikorn = accounts.find((a) => a.name.trim().toLowerCase() === "kasikorn")?.id;
+    return kasikorn ?? accounts[0]?.id ?? "";
+  }, [accounts]);
 
   const formatLongDate = (iso: string) => {
     const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
@@ -463,7 +486,7 @@ export default function Home() {
       amount: "",
       name: "",
       note: "",
-      account_id: accounts[0]?.id ?? "",
+      account_id: defaultAccountId,
       category_id: "",
     });
     setExpenseCalendarOpen(false);
@@ -603,7 +626,7 @@ export default function Home() {
       amount: "",
       name: "",
       note: "",
-      account_id: accounts[0]?.id ?? "",
+      account_id: defaultAccountId,
     });
     setIncomeCalendarOpen(false);
     setIncomeOpen(true);
@@ -745,15 +768,18 @@ export default function Home() {
   const openTransfer = () => {
     setAuthError(null);
     setTransferEditingId(null);
-    const first = orderedAccounts[0]?.id ?? accounts[0]?.id ?? "";
-    const second = orderedAccounts[1]?.id ?? orderedAccounts[0]?.id ?? accounts[0]?.id ?? "";
+    const first = defaultAccountId || orderedAccounts[0]?.id || accounts[0]?.id || "";
+    const second =
+      orderedAccounts.find((a) => a.id !== first)?.id ??
+      accounts.find((a) => a.id !== first)?.id ??
+      "";
     setTransferDraft({
       date: monthDefaultDate,
       amount: "",
       name: "",
       note: "",
       from_account_id: first,
-      to_account_id: second === first ? "" : second,
+      to_account_id: second,
     });
     setTransferCalendarOpen(false);
     setTransferOpen(true);
@@ -1429,7 +1455,7 @@ export default function Home() {
     setBillEditingId(null);
     setBillDraft({
       name: "",
-      account_id: "",
+      account_id: defaultAccountId,
       due_date: monthDefaultDate,
       amount: "",
       paid: false,
@@ -1914,6 +1940,17 @@ export default function Home() {
     [transactions, monthEndIso, monthStart],
   );
 
+  const recentExpenseCards = useMemo(() => {
+    const cutoff = new Date();
+    cutoff.setHours(0, 0, 0, 0);
+    cutoff.setDate(cutoff.getDate() - 3); // today + previous 3 days = 4 days
+    const cutoffIso = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
+    return txInMonth
+      .filter((t) => t.type === "expense" && t.date >= cutoffIso)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, 12);
+  }, [txInMonth]);
+
   const hiddenCategoryIdsForMonth = useMemo(() => {
     const s = new Set<string>();
     categoryMonthSettings.forEach((r) => {
@@ -2160,12 +2197,13 @@ export default function Home() {
                   opacity={0.92}
                   stroke="#000"
                   strokeWidth={1}
-                  onMouseMove={(e) => {
+                  onPointerMove={(e) => {
                     const x = Math.min(window.innerWidth - 16, e.clientX + 14);
                     const y = Math.min(window.innerHeight - 16, e.clientY + 14);
                     setHoveredExpenseDonut({ label: s.label, amount: s.amount, color: s.color, x, y });
                   }}
-                  onMouseLeave={() => setHoveredExpenseDonut(null)}
+                  onPointerLeave={() => setHoveredExpenseDonut(null)}
+                  onPointerCancel={() => setHoveredExpenseDonut(null)}
                 />
               );
             });
@@ -2173,16 +2211,22 @@ export default function Home() {
         : [];
 
     return (
-      <div className={`rounded border ${frameBorder} bg-black px-3 py-3`}>
+      <div className={`rounded border ${frameBorder} bg-[var(--mt-panel)] px-3 py-3`}>
         <div className={`mb-3 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Expense breakdown</div>
 
         <div className="flex flex-col items-center gap-3">
-          <div className="relative" style={{ width: size, height: size }}>
+          <div
+            className="relative"
+            style={{ width: size, height: size }}
+            onPointerLeave={() => setHoveredExpenseDonut(null)}
+            onPointerCancel={() => setHoveredExpenseDonut(null)}
+          >
             <svg
               width={size}
               height={size}
               viewBox={`0 0 ${size} ${size}`}
-              onMouseLeave={() => setHoveredExpenseDonut(null)}
+              onPointerLeave={() => setHoveredExpenseDonut(null)}
+              onPointerCancel={() => setHoveredExpenseDonut(null)}
             >
               <circle cx={cx} cy={cy} r={rOuter} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={rOuter - rInner} />
               {total > 0 ? arcs : null}
@@ -2191,7 +2235,7 @@ export default function Home() {
 
             <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
               <div className={`text-[11px] uppercase tracking-[0.6px] ${headingColor}`}>Total expense</div>
-              <div className="mt-1 text-[17px] font-semibold text-[#ff5555]">{fmt(total)}</div>
+              <div className="mt-1 text-[17px] font-semibold text-[color:var(--mt-danger)]">{fmt(total)}</div>
               <div className={`mt-1 text-[11px] ${headingColor}`}>{`${MONTHS[monthIndex]} ${year}`}</div>
             </div>
           </div>
@@ -2209,7 +2253,7 @@ export default function Home() {
                       <span className={`truncate text-sm ${itemNameColor}`}>{s.label}</span>
                     </div>
                     <div className="shrink-0 text-right">
-                      <div className="text-sm text-white">{fmt(s.amount)}</div>
+                      <div className="text-sm text-[color:var(--mt-text)]">{fmt(s.amount)}</div>
                       <div className={`text-[11px] ${headingColor}`}>{`${pct.toFixed(1)}%`}</div>
                     </div>
                   </div>
@@ -2268,12 +2312,13 @@ export default function Home() {
                   opacity={0.92}
                   stroke="#000"
                   strokeWidth={1}
-                  onMouseMove={(e) => {
+                  onPointerMove={(e) => {
                     const x = Math.min(window.innerWidth - 16, e.clientX + 14);
                     const y = Math.min(window.innerHeight - 16, e.clientY + 14);
                     setHoveredBudgetRemainingDonut({ label: s.label, amount: s.amount, budget: s.budget, color: s.color, x, y });
                   }}
-                  onMouseLeave={() => setHoveredBudgetRemainingDonut(null)}
+                  onPointerLeave={() => setHoveredBudgetRemainingDonut(null)}
+                  onPointerCancel={() => setHoveredBudgetRemainingDonut(null)}
                 />
               );
             });
@@ -2284,12 +2329,18 @@ export default function Home() {
       <div className="px-2.5 py-2">
         <div className="flex items-center gap-4">
           <div className="shrink-0">
-            <div className="relative" style={{ width: size, height: size }}>
+            <div
+              className="relative"
+              style={{ width: size, height: size }}
+              onPointerLeave={() => setHoveredBudgetRemainingDonut(null)}
+              onPointerCancel={() => setHoveredBudgetRemainingDonut(null)}
+            >
               <svg
                 width={size}
                 height={size}
                 viewBox={`0 0 ${size} ${size}`}
-                onMouseLeave={() => setHoveredBudgetRemainingDonut(null)}
+                onPointerLeave={() => setHoveredBudgetRemainingDonut(null)}
+                onPointerCancel={() => setHoveredBudgetRemainingDonut(null)}
               >
                 <circle cx={cx} cy={cy} r={rOuter} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth={rOuter - rInner} />
                 {total > 0 ? arcs : null}
@@ -2297,7 +2348,7 @@ export default function Home() {
               </svg>
 
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
-                <div className="text-[17px] font-semibold text-white">{fmt(total)}</div>
+              <div className="text-[17px] font-semibold text-[color:var(--mt-text)]">{fmt(total)}</div>
               </div>
             </div>
           </div>
@@ -2540,14 +2591,14 @@ export default function Home() {
 
   if (!supabase) {
     return (
-      <div className="min-h-screen bg-black p-6 text-white">
-        <div className={`mx-auto max-w-md rounded border ${frameBorder} bg-black p-4`}>
+      <div className="min-h-screen bg-[var(--mt-bg)] p-6 text-[color:var(--mt-text)]">
+        <div className={`mx-auto max-w-md rounded border ${frameBorder} bg-[var(--mt-panel)] p-4`}>
           <div className={`text-sm ${headingColor}`}>Supabase ยังไม่ถูกตั้งค่า</div>
           <div className={`mt-2 text-sm ${itemNameColor}`}>
-            ให้สร้างไฟล์ <span className="text-white">web-app/.env.local</span> แล้วใส่
+            ให้สร้างไฟล์ <span className="text-[color:var(--mt-text)]">web-app/.env.local</span> แล้วใส่
             <br />
-            <span className="text-white">NEXT_PUBLIC_SUPABASE_URL</span> และ{" "}
-            <span className="text-white">NEXT_PUBLIC_SUPABASE_ANON_KEY</span>
+            <span className="text-[color:var(--mt-text)]">NEXT_PUBLIC_SUPABASE_URL</span> และ{" "}
+            <span className="text-[color:var(--mt-text)]">NEXT_PUBLIC_SUPABASE_ANON_KEY</span>
           </div>
         </div>
       </div>
@@ -2556,16 +2607,16 @@ export default function Home() {
 
   if (!session) {
     return (
-      <div className="min-h-screen bg-black p-6 text-white">
-        <div className={`mx-auto max-w-md rounded border ${frameBorder} bg-black p-4`}>
-          <div className="text-lg font-semibold text-white">Login</div>
+      <div className="min-h-screen bg-[var(--mt-bg)] p-6 text-[color:var(--mt-text)]">
+        <div className={`mx-auto max-w-md rounded border ${frameBorder} bg-[var(--mt-panel)] p-4`}>
+          <div className="text-lg font-semibold text-[color:var(--mt-text)]">Login</div>
 
           <label className={`mt-3 block text-sm ${headingColor}`}>Email</label>
           <input
             value={authEmail}
             onChange={(e) => setAuthEmail(e.target.value)}
             placeholder="you@example.com"
-            className={`mt-1 w-full rounded border ${frameBorder} bg-black px-3 py-2 text-white`}
+            className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-3 py-2 text-[color:var(--mt-text)]`}
             autoComplete="email"
             inputMode="email"
           />
@@ -2573,12 +2624,12 @@ export default function Home() {
           <button
             onClick={sendMagicLink}
             disabled={authBusy || !authEmail.trim()}
-            className="mt-3 w-full rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111] disabled:opacity-50"
+            className="mt-3 w-full rounded bg-[color:var(--mt-accent)] px-3 py-2 text-sm font-medium text-[color:var(--mt-on-accent)] disabled:opacity-50"
           >
             {authBusy ? "Sending..." : "Send magic link"}
           </button>
 
-          {authError && <div className="mt-3 text-sm text-[#ff5555]">{authError}</div>}
+          {authError && <div className="mt-3 text-sm text-[color:var(--mt-danger)]">{authError}</div>}
 
           <div className={`mt-3 text-xs ${itemNameColor}`}>
             ระบบจะส่งลิงก์เข้าระบบไปที่อีเมลของคุณ → กดลิงก์แล้วจะกลับมาที่เว็บนี้
@@ -2589,20 +2640,20 @@ export default function Home() {
   }
 
   return (
-    <div className="flex h-screen bg-black font-sans text-[15px] leading-[1.4] text-white">
-      <aside className={`hidden w-[180px] shrink-0 flex-col border-r ${frameBorder} bg-black sm:flex lg:w-[150px]`}>
-        <div className={`border-b ${frameBorder} px-3.5 py-2 text-xs font-medium leading-[1.5] tracking-[0.7px] text-[#00CCCC]`}>
-          MONEY TRACKER
+    <div className="flex h-screen bg-[var(--mt-bg)] font-sans text-[15px] leading-[1.4] text-[var(--mt-text)]">
+      <aside className={`hidden w-[180px] shrink-0 flex-col border-r ${frameBorder} bg-[var(--mt-panel)] sm:flex lg:w-[150px]`}>
+        <div className={`border-b ${frameBorder} px-3.5 py-2 text-xs font-medium leading-[1.5] tracking-[0.7px] text-[color:var(--mt-accent)]`}>
+          <div>MONEY TRACKER</div>
         </div>
         <nav className="flex-1 py-1">
           {pageOrder.map((page) => (
-            <button
+              <button
               key={page}
               onClick={() => setActivePage(page)}
               className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm capitalize transition ${
                 activePage === page
-                  ? "bg-white/[0.03] text-white"
-                  : `${headingColor} hover:bg-white/[0.02] hover:text-white`
+                  ? "bg-white/[0.03] text-[color:var(--mt-text)]"
+                  : `${headingColor} hover:bg-white/[0.02] hover:text-[color:var(--mt-text)]`
               }`}
             >
               {page}
@@ -2612,26 +2663,26 @@ export default function Home() {
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className={`sticky top-0 z-10 flex items-center justify-between border-b ${frameBorder} bg-black/80 px-3.5 py-2 backdrop-blur`}>
+        <div className={`sticky top-0 z-10 flex items-center justify-between border-b ${frameBorder} bg-[var(--mt-panel)]/80 px-3.5 py-2 backdrop-blur`}>
           <div className="pointer-events-none flex items-center gap-2" />
 
           <div className="pointer-events-auto absolute left-1/2 flex -translate-x-1/2 items-center gap-2">
             <button
               onClick={() => changeMonth(-1)}
-              className={`flex h-5 w-5 items-center justify-center rounded border ${frameBorder} bg-white/[0.02] text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+              className={`flex h-5 w-5 items-center justify-center rounded border ${frameBorder} bg-white/[0.02] text-sm ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
             >
               ‹
             </button>
-            <span className="text-sm font-medium text-white">{`${MONTHS[monthIndex]} ${year}`}</span>
+            <span className="text-sm font-medium text-[color:var(--mt-text)]">{`${MONTHS[monthIndex]} ${year}`}</span>
             <button
               onClick={() => changeMonth(1)}
-              className={`flex h-5 w-5 items-center justify-center rounded border ${frameBorder} bg-white/[0.02] text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+              className={`flex h-5 w-5 items-center justify-center rounded border ${frameBorder} bg-white/[0.02] text-sm ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
             >
               ›
             </button>
           </div>
           <div className="pointer-events-auto flex gap-1.5">
-            <button onClick={openExpense} className="rounded bg-[#ff5555] px-2.5 py-1 text-sm font-medium text-white">
+            <button onClick={openExpense} className="rounded bg-[color:var(--mt-danger)] px-2.5 py-1 text-sm font-medium text-[color:var(--mt-text)]">
               + Expense
             </button>
             <button
@@ -2649,7 +2700,7 @@ export default function Home() {
             {activePage === "categories" && (
               <button
                 onClick={openCategory}
-                className={`rounded border ${frameBorder} bg-white/[0.02] px-2.5 py-1 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                className={`rounded border ${frameBorder} bg-white/[0.02] px-2.5 py-1 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
               >
                 + Category
               </button>
@@ -2658,7 +2709,7 @@ export default function Home() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={openBill}
-                  className={`rounded border ${frameBorder} bg-white/[0.02] px-2.5 py-1 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                  className={`rounded border ${frameBorder} bg-white/[0.02] px-2.5 py-1 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                 >
                   + Bill
                 </button>
@@ -2677,24 +2728,24 @@ export default function Home() {
 
         <section className="flex-1 overflow-y-auto p-3.5">
           {monthLoading && (
-            <div className={`mb-[10px] rounded border ${frameBorder} bg-black px-3 py-2 text-sm ${headingColor}`}>
+            <div className={`mb-[10px] rounded border ${frameBorder} bg-[var(--mt-panel)] px-3 py-2 text-sm ${headingColor}`}>
               Loading…
             </div>
           )}
           {authError && (
-            <div className={`mb-[10px] rounded border ${frameBorder} bg-black px-3 py-2 text-sm text-[#ff5555]`}>
+            <div className={`mb-[10px] rounded border ${frameBorder} bg-[var(--mt-panel)] px-3 py-2 text-sm text-[color:var(--mt-danger)]`}>
               {authError}
             </div>
           )}
 
           {expenseOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-[var(--mt-panel)]`}>
                 <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
-                  <div className="text-sm font-semibold text-white">{expenseEditingId ? "Edit expense" : "Add expense"}</div>
+                  <div className="text-sm font-semibold text-[color:var(--mt-text)]">{expenseEditingId ? "Edit expense" : "Add expense"}</div>
                   <button
                     onClick={() => setExpenseOpen(false)}
-                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                   >
                     ✕
                   </button>
@@ -2708,20 +2759,20 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => setExpenseCalendarOpen((v) => !v)}
-                          className={`flex w-full items-center justify-between rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                          className={`flex w-full items-center justify-between rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                         >
                           <span>{formatLongDate(expenseDraft.date)}</span>
                           <span className={headingColor}>▾</span>
                         </button>
 
                         {expenseCalendarOpen && (
-                          <div className={`absolute left-0 top-[44px] z-10 w-[260px] rounded border ${frameBorder} bg-black p-3`}>
+                          <div className={`absolute left-0 top-[44px] z-10 w-[260px] rounded border ${frameBorder} bg-[var(--mt-panel)] p-3`}>
                             <div className={`mb-2 flex items-center justify-between text-xs uppercase tracking-[0.5px] ${headingColor}`}>
                               <span>{`${MONTHS[monthIndex]} ${year}`}</span>
                               <button
                                 type="button"
                                 onClick={() => setExpenseCalendarOpen(false)}
-                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                               >
                                 ✕
                               </button>
@@ -2760,7 +2811,7 @@ export default function Home() {
                                         className={`h-8 rounded border text-sm ${
                                           isSel
                                             ? `border-[#00CCCC] bg-[#00CCCC]/10 text-[#00CCCC]`
-                                            : `border-transparent bg-white/[0.02] text-white hover:bg-white/[0.04]`
+                                            : `border-transparent bg-white/[0.02] text-[color:var(--mt-text)] hover:bg-white/[0.04]`
                                         }`}
                                       >
                                         {d}
@@ -2781,7 +2832,7 @@ export default function Home() {
                         onChange={(e) => setExpenseDraft((d) => ({ ...d, amount: e.target.value }))}
                         placeholder="0.00"
                         inputMode="decimal"
-                        className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                        className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                       />
                     </div>
                   </div>
@@ -2792,7 +2843,7 @@ export default function Home() {
                       value={expenseDraft.name}
                       onChange={(e) => setExpenseDraft((d) => ({ ...d, name: e.target.value }))}
                       placeholder="e.g. Coffee"
-                      className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                      className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                     />
                   </div>
 
@@ -2807,7 +2858,9 @@ export default function Home() {
                             type="button"
                             onClick={() => setExpenseDraft((d) => ({ ...d, account_id: a.id }))}
                             className={`shrink-0 rounded px-2.5 py-1.5 text-center text-[11px] font-medium ${
-                              sel ? "border border-[#444747] bg-black text-white shadow-[0_1px_0_rgba(255,255,255,0.04)]" : `${headingColor} hover:text-white`
+                              sel
+                                ? "border border-[#444747] bg-[var(--mt-panel)] text-[color:var(--mt-text)] shadow-[0_1px_0_rgba(255,255,255,0.04)]"
+                                : `${headingColor} hover:text-[color:var(--mt-text)]`
                             }`}
                           >
                             {a.name}
@@ -2826,7 +2879,7 @@ export default function Home() {
                         className={`rounded border px-2 py-2 text-center text-[10px] font-medium ${
                           expenseDraft.category_id === ""
                             ? "border-[#00CCCC] bg-[#00CCCC]/10 text-[#00CCCC]"
-                            : `border-transparent bg-white/[0.02] ${itemNameColor} hover:text-white`
+                            : `border-transparent bg-white/[0.02] ${itemNameColor} hover:text-[color:var(--mt-text)]`
                         }`}
                       >
                         None
@@ -2849,7 +2902,7 @@ export default function Home() {
                               <span style={{ color: col }}>
                                 <CategoryIcon name={c.name} className="inline-flex h-5 w-5 items-center justify-center" />
                               </span>
-                              <span className={`line-clamp-2 text-[9px] leading-tight ${sel ? "text-white" : itemNameColor}`}>{c.name}</span>
+                              <span className={`line-clamp-2 text-[9px] leading-tight ${sel ? "text-[color:var(--mt-text)]" : itemNameColor}`}>{c.name}</span>
                             </div>
                           </button>
                         );
@@ -2863,7 +2916,7 @@ export default function Home() {
                       value={expenseDraft.note}
                       onChange={(e) => setExpenseDraft((d) => ({ ...d, note: e.target.value }))}
                       placeholder="(optional)"
-                      className={`mt-1 min-h-[84px] w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                      className={`mt-1 min-h-[84px] w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                     />
                   </div>
                 </div>
@@ -2880,14 +2933,14 @@ export default function Home() {
                   )}
                   <button
                     onClick={() => setExpenseOpen(false)}
-                    className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                   >
                     Cancel
                   </button>
                   <button
                     onClick={saveExpense}
                     disabled={expenseSaving}
-                    className="rounded bg-[#ff5555] px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+                    className="rounded bg-[color:var(--mt-danger)] px-3 py-2 text-sm font-medium text-[color:var(--mt-text)] disabled:opacity-50"
                   >
                     {expenseSaving ? "Saving…" : expenseEditingId ? "Save changes" : "Save expense"}
                   </button>
@@ -2898,12 +2951,12 @@ export default function Home() {
 
           {incomeOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-[var(--mt-panel)]`}>
                 <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
-                  <div className="text-sm font-semibold text-white">{incomeEditingId ? "Edit income" : "Add income"}</div>
+                  <div className="text-sm font-semibold text-[color:var(--mt-text)]">{incomeEditingId ? "Edit income" : "Add income"}</div>
                   <button
                     onClick={closeIncomeModal}
-                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                   >
                     ✕
                   </button>
@@ -2917,20 +2970,20 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => setIncomeCalendarOpen((v) => !v)}
-                          className={`flex w-full items-center justify-between rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                          className={`flex w-full items-center justify-between rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                         >
                           <span>{formatLongDate(incomeDraft.date)}</span>
                           <span className={headingColor}>▾</span>
                         </button>
 
                         {incomeCalendarOpen && (
-                          <div className={`absolute left-0 top-[44px] z-10 w-[260px] rounded border ${frameBorder} bg-black p-3`}>
+                          <div className={`absolute left-0 top-[44px] z-10 w-[260px] rounded border ${frameBorder} bg-[var(--mt-panel)] p-3`}>
                             <div className={`mb-2 flex items-center justify-between text-xs uppercase tracking-[0.5px] ${headingColor}`}>
                               <span>{`${MONTHS[monthIndex]} ${year}`}</span>
                               <button
                                 type="button"
                                 onClick={() => setIncomeCalendarOpen(false)}
-                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                               >
                                 ✕
                               </button>
@@ -2969,7 +3022,7 @@ export default function Home() {
                                         className={`h-8 rounded border text-sm ${
                                           isSel
                                             ? `border-[#00CCCC] bg-[#00CCCC]/10 text-[#00CCCC]`
-                                            : `border-transparent bg-white/[0.02] text-white hover:bg-white/[0.04]`
+                                            : `border-transparent bg-white/[0.02] text-[color:var(--mt-text)] hover:bg-white/[0.04]`
                                         }`}
                                       >
                                         {d}
@@ -2990,7 +3043,7 @@ export default function Home() {
                         onChange={(e) => setIncomeDraft((d) => ({ ...d, amount: e.target.value }))}
                         placeholder="0.00"
                         inputMode="decimal"
-                        className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                        className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                       />
                     </div>
                   </div>
@@ -3001,7 +3054,7 @@ export default function Home() {
                       value={incomeDraft.name}
                       onChange={(e) => setIncomeDraft((d) => ({ ...d, name: e.target.value }))}
                       placeholder="e.g. Salary"
-                      className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                      className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                     />
                   </div>
 
@@ -3016,7 +3069,9 @@ export default function Home() {
                             type="button"
                             onClick={() => setIncomeDraft((d) => ({ ...d, account_id: a.id }))}
                             className={`shrink-0 rounded px-2.5 py-1.5 text-center text-[11px] font-medium ${
-                              sel ? "border border-[#444747] bg-black text-white shadow-[0_1px_0_rgba(255,255,255,0.04)]" : `${headingColor} hover:text-white`
+                              sel
+                                ? "border border-[#444747] bg-[var(--mt-panel)] text-[color:var(--mt-text)] shadow-[0_1px_0_rgba(255,255,255,0.04)]"
+                                : `${headingColor} hover:text-[color:var(--mt-text)]`
                             }`}
                           >
                             {a.name}
@@ -3032,7 +3087,7 @@ export default function Home() {
                       value={incomeDraft.note}
                       onChange={(e) => setIncomeDraft((d) => ({ ...d, note: e.target.value }))}
                       placeholder="(optional)"
-                      className={`mt-1 min-h-[84px] w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                      className={`mt-1 min-h-[84px] w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                     />
                   </div>
                 </div>
@@ -3049,7 +3104,7 @@ export default function Home() {
                   )}
                   <button
                     onClick={closeIncomeModal}
-                    className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                   >
                     Cancel
                   </button>
@@ -3067,12 +3122,12 @@ export default function Home() {
 
           {incomeDeleteConfirmOpen && incomeEditingId && (
             <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4">
-              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-[var(--mt-panel)]`}>
                 <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
-                  <div className="text-sm font-semibold text-white">Delete this income?</div>
+                  <div className="text-sm font-semibold text-[color:var(--mt-text)]">Delete this income?</div>
                   <button
                     onClick={() => setIncomeDeleteConfirmOpen(false)}
-                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                   >
                     ✕
                   </button>
@@ -3083,7 +3138,7 @@ export default function Home() {
                     type="button"
                     onClick={() => setIncomeDeleteConfirmOpen(false)}
                     disabled={incomeSaving}
-                    className={`w-full rounded border ${frameBorder} bg-white/[0.02] px-3 py-3 text-left text-sm font-medium text-white hover:bg-white/[0.04] disabled:opacity-50`}
+                    className={`w-full rounded border ${frameBorder} bg-white/[0.02] px-3 py-3 text-left text-sm font-medium text-[color:var(--mt-text)] hover:bg-white/[0.04] disabled:opacity-50`}
                   >
                     Cancel
                   </button>
@@ -3105,12 +3160,12 @@ export default function Home() {
 
           {transferOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-[var(--mt-panel)]`}>
                 <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
-                  <div className="text-sm font-semibold text-white">{transferEditingId ? "Edit transfer" : "Add transfer"}</div>
+                  <div className="text-sm font-semibold text-[color:var(--mt-text)]">{transferEditingId ? "Edit transfer" : "Add transfer"}</div>
                   <button
                     onClick={() => setTransferOpen(false)}
-                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                   >
                     ✕
                   </button>
@@ -3124,20 +3179,20 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={() => setTransferCalendarOpen((v) => !v)}
-                          className={`flex w-full items-center justify-between rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                          className={`flex w-full items-center justify-between rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                         >
                           <span>{formatLongDate(transferDraft.date)}</span>
                           <span className={headingColor}>▾</span>
                         </button>
 
                         {transferCalendarOpen && (
-                          <div className={`absolute left-0 top-[44px] z-10 w-[260px] rounded border ${frameBorder} bg-black p-3`}>
+                          <div className={`absolute left-0 top-[44px] z-10 w-[260px] rounded border ${frameBorder} bg-[var(--mt-panel)] p-3`}>
                             <div className={`mb-2 flex items-center justify-between text-xs uppercase tracking-[0.5px] ${headingColor}`}>
                               <span>{`${MONTHS[monthIndex]} ${year}`}</span>
                               <button
                                 type="button"
                                 onClick={() => setTransferCalendarOpen(false)}
-                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                               >
                                 ✕
                               </button>
@@ -3176,7 +3231,7 @@ export default function Home() {
                                         className={`h-8 rounded border text-sm ${
                                           isSel
                                             ? `border-[#00CCCC] bg-[#00CCCC]/10 text-[#00CCCC]`
-                                            : `border-transparent bg-white/[0.02] text-white hover:bg-white/[0.04]`
+                                            : `border-transparent bg-white/[0.02] text-[color:var(--mt-text)] hover:bg-white/[0.04]`
                                         }`}
                                       >
                                         {d}
@@ -3197,7 +3252,7 @@ export default function Home() {
                         onChange={(e) => setTransferDraft((d) => ({ ...d, amount: e.target.value }))}
                         placeholder="0.00"
                         inputMode="decimal"
-                        className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                        className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                       />
                     </div>
                   </div>
@@ -3208,7 +3263,7 @@ export default function Home() {
                       value={transferDraft.name}
                       onChange={(e) => setTransferDraft((d) => ({ ...d, name: e.target.value }))}
                       placeholder="e.g. Transfer"
-                      className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                      className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                     />
                   </div>
 
@@ -3223,7 +3278,9 @@ export default function Home() {
                             type="button"
                             onClick={() => setTransferDraft((d) => ({ ...d, from_account_id: a.id }))}
                             className={`shrink-0 rounded px-2.5 py-1.5 text-center text-[11px] font-medium ${
-                              sel ? "border border-[#444747] bg-black text-white shadow-[0_1px_0_rgba(255,255,255,0.04)]" : `${headingColor} hover:text-white`
+                              sel
+                                ? "border border-[#444747] bg-[var(--mt-panel)] text-[color:var(--mt-text)] shadow-[0_1px_0_rgba(255,255,255,0.04)]"
+                                : `${headingColor} hover:text-[color:var(--mt-text)]`
                             }`}
                           >
                             {a.name}
@@ -3260,7 +3317,7 @@ export default function Home() {
                       value={transferDraft.note}
                       onChange={(e) => setTransferDraft((d) => ({ ...d, note: e.target.value }))}
                       placeholder="(optional)"
-                      className={`mt-1 min-h-[84px] w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                      className={`mt-1 min-h-[84px] w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                     />
                   </div>
                 </div>
@@ -3277,7 +3334,7 @@ export default function Home() {
                   )}
                   <button
                     onClick={() => setTransferOpen(false)}
-                    className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                   >
                     Cancel
                   </button>
@@ -3295,12 +3352,12 @@ export default function Home() {
 
           {goalOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-[var(--mt-panel)]`}>
                 <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
-                  <div className="text-sm font-semibold text-white">Add Goal</div>
+                  <div className="text-sm font-semibold text-[color:var(--mt-text)]">Add Goal</div>
                   <button
                     onClick={() => setGoalOpen(false)}
-                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                   >
                     ✕
                   </button>
@@ -3313,7 +3370,7 @@ export default function Home() {
                       value={goalAddDraft.name}
                       onChange={(e) => setGoalAddDraft((d) => ({ ...d, name: e.target.value }))}
                       placeholder="e.g. Savings"
-                      className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                      className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                     />
                   </div>
 
@@ -3321,12 +3378,12 @@ export default function Home() {
                     <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Color</label>
                     <div className="mt-2 flex flex-wrap gap-2">
                       {[
-                        { label: "Teal", value: "#103544" },
-                        { label: "Rose", value: "#441933" },
-                        { label: "Sand", value: "#5e4f2a" },
-                        { label: "Brick", value: "#561e1e" },
-                        { label: "Olive", value: "#2d510a" },
-                        { label: "Violet", value: "#37154c" },
+                        { label: "Teal", value: "#2DD4BF" },
+                        { label: "Sky", value: "#4FD1FF" },
+                        { label: "Violet", value: "#A855F7" },
+                        { label: "Rose", value: "#FF6B9A" },
+                        { label: "Green", value: "#22C55E" },
+                        { label: "Orange", value: "#FF8A3D" },
                       ].map((c) => {
                         const sel = (goalAddDraft.color || "").toLowerCase() === c.value.toLowerCase();
                         return (
@@ -3335,7 +3392,9 @@ export default function Home() {
                             type="button"
                             onClick={() => setGoalAddDraft((d) => ({ ...d, color: c.value }))}
                             className={`rounded border px-2.5 py-1.5 text-[11px] font-medium ${
-                              sel ? "border-[#444747] bg-black text-white" : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
+                              sel
+                                ? "border-[#444747] bg-[var(--mt-panel)] text-[color:var(--mt-text)]"
+                                : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`
                             }`}
                             title={c.value}
                           >
@@ -3357,7 +3416,7 @@ export default function Home() {
                         onChange={(e) => setGoalAddDraft((d) => ({ ...d, goal_amount: e.target.value }))}
                         placeholder="0.00"
                         inputMode="decimal"
-                        className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                        className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                       />
                     </div>
                     <div>
@@ -3414,13 +3473,13 @@ export default function Home() {
 
           {goalEditOpen && (
             <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
-              <div className={`w-full max-w-md rounded border ${frameBorder} bg-black`}>
+              <div className={`w-full max-w-md rounded border ${frameBorder} bg-[var(--mt-panel)]`}>
                 <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
-                  <div className="text-sm font-semibold text-white">Edit goal</div>
+                  <div className="text-sm font-semibold text-[color:var(--mt-text)]">Edit goal</div>
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => setGoalEditOpen(false)}
-                      className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                      className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                     >
                       ✕
                     </button>
@@ -3434,7 +3493,7 @@ export default function Home() {
                       value={goalEditDraft.name}
                       onChange={(e) => setGoalEditDraft((d) => ({ ...d, name: e.target.value }))}
                       placeholder="e.g. House"
-                      className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                      className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                     />
                   </div>
 
@@ -3446,7 +3505,7 @@ export default function Home() {
                         onChange={(e) => setGoalEditDraft((d) => ({ ...d, balance_amount: e.target.value }))}
                         placeholder="0.00"
                         inputMode="decimal"
-                        className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                        className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                       />
                     </div>
                     <div>
@@ -3456,7 +3515,7 @@ export default function Home() {
                         onChange={(e) => setGoalEditDraft((d) => ({ ...d, goal_amount: e.target.value }))}
                         placeholder="0.00"
                         inputMode="decimal"
-                        className={`mt-1 w-full rounded border ${frameBorder} bg-black px-2.5 py-2 text-sm text-white`}
+                        className={`mt-1 w-full rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
                       />
                     </div>
                   </div>
@@ -3474,13 +3533,13 @@ export default function Home() {
                   )}
                   <button
                     onClick={() => setGoalEditOpen(false)}
-                    className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-3 py-2 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                   >
                     Cancel
                   </button>
                   <button
                     onClick={saveGoalEdit}
-                    className="rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111]"
+                    className="rounded bg-[color:var(--mt-accent)] px-3 py-2 text-sm font-medium text-[color:var(--mt-on-accent)]"
                   >
                     Save changes
                   </button>
@@ -4295,10 +4354,22 @@ export default function Home() {
           {activePage === "dashboard" && (
             <>
               <div className="mb-[10px] grid gap-[10px] sm:grid-cols-2 lg:grid-cols-4">
-              <div className={`rounded border ${frameBorder} bg-[#141414] px-2.5 py-2`}><div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Income</div><div className="text-[15px] text-white">{fmt(totalIncome)}</div></div>
-                <div className={`rounded border ${frameBorder} bg-[#141414] px-2.5 py-2`}><div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Spent</div><div className="text-[15px] text-[#ff5555]">{fmt(totalSpent)}</div></div>
-                <div className={`rounded border ${frameBorder} bg-[#141414] px-2.5 py-2`}><div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Net</div><div className="text-[15px] text-[#ff5555]">{fmt(totalIncome - totalSpent)}</div></div>
-                <div className={`rounded border ${frameBorder} bg-[#141414] px-2.5 py-2`}><div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>All assets</div><div className="text-[15px] text-[#00CCCC]">{fmt(totalAccountBalance)}</div></div>
+                <div className={summaryCardClass}>
+                  <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Income</div>
+                  <div className="text-[15px] text-[color:var(--mt-text)]">{fmt(totalIncome)}</div>
+                </div>
+                <div className={summaryCardClass}>
+                  <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Spent</div>
+                  <div className="text-[15px] text-[color:var(--mt-danger)]">{fmt(totalSpent)}</div>
+                </div>
+                <div className={summaryCardClass}>
+                  <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Net</div>
+                  <div className="text-[15px] text-[color:var(--mt-danger)]">{fmt(totalIncome - totalSpent)}</div>
+                </div>
+                <div className={summaryCardClass}>
+                  <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>All assets</div>
+                  <div className="text-[15px] text-[color:var(--mt-accent)]">{fmt(totalAccountBalance)}</div>
+                </div>
               </div>
 
               <div className="grid gap-[10px] lg:grid-cols-[1fr_1.15fr_0.85fr]">
@@ -4309,7 +4380,7 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={openAccount}
-                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                       >
                         + Account
                       </button>
@@ -4318,7 +4389,7 @@ export default function Home() {
                       <div className="grid grid-cols-2 gap-[10px]">
                         {orderedAccounts.map((a) => {
                           const lastDate = lastChangeDateByAccountId.get(a.id);
-                          const bg = (a as any).color ? ((a as any).color as string) : "#000";
+                          const bg = (a as any).color ? ((a as any).color as string) : "var(--mt-card)";
                           const border = "#444747";
                           return (
                             <div
@@ -4375,7 +4446,7 @@ export default function Home() {
                           const remaining = Math.max(0, goalValue - balanceValue);
 
                           return (
-                            <div key={g.id} className={`rounded border ${frameBorder} bg-black px-3 py-2`}>
+                            <div key={g.id} className={`rounded border ${frameBorder} bg-[var(--mt-card)] px-3 py-2`}>
                               <div className="flex items-center justify-between gap-2">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-start gap-2">
@@ -4418,7 +4489,7 @@ export default function Home() {
                         <button
                           type="button"
                           onClick={openBill}
-                          className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                          className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                         >
                           + Bill
                         </button>
@@ -4430,8 +4501,8 @@ export default function Home() {
                           key={`${bill.id}-${i}`}
                           className={`rounded border px-2.5 py-2`}
                           style={{
-                            backgroundColor: "#000",
-                            borderColor: "#444747",
+                            backgroundColor: "var(--mt-card)",
+                            borderColor: "var(--mt-border)",
                           }}
                         >
                           <div className="flex items-start justify-between gap-3">
@@ -4442,7 +4513,7 @@ export default function Home() {
                               <div className={`mt-0.5 text-xs ${headingColor}`}>Due {bill.due_date ? formatLongDate(bill.due_date) : "—"}</div>
                               <div className={`mt-0.5 text-xs ${headingColor}`}>
                                 Paid{" "}
-                                <span className={bill.paid && bill.paid_at ? "text-[#00CCCC]" : "text-white/40"}>
+                                <span className={bill.paid && bill.paid_at ? "text-[color:var(--mt-accent)]" : "text-white/40"}>
                                   {bill.paid && bill.paid_at ? formatLongDate(bill.paid_at) : "—"}
                                 </span>
                               </div>
@@ -4451,7 +4522,9 @@ export default function Home() {
                               <button
                                 onClick={() => requestToggleBillPaid(i)}
                                 className={`mt-1 rounded px-2 py-0.5 text-xs ${
-                                  bill.paid ? "bg-[#00CCCC]/10 text-[#00CCCC]" : "bg-[#ff5555]/10 text-[#ff5555]"
+                                  bill.paid
+                                    ? "bg-[color:var(--mt-accent)]/10 text-[color:var(--mt-accent)]"
+                                    : "bg-[color:var(--mt-danger)]/10 text-[color:var(--mt-danger)]"
                                 }`}
                               >
                                 {bill.paid ? "Paid" : "Unpaid"}
@@ -4471,7 +4544,7 @@ export default function Home() {
                       <button
                         type="button"
                         onClick={openCategory}
-                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                       >
                         + Category
                       </button>
@@ -4484,7 +4557,7 @@ export default function Home() {
                         return (
                           <div
                             key={b.category.id}
-                            className={`rounded border ${frameBorder} bg-black px-2.5 py-2`}
+                            className={`rounded border ${frameBorder} bg-[var(--mt-card)] px-2.5 py-2`}
                             style={undefined}
                           >
                             <div className="flex items-baseline justify-between">
@@ -4492,12 +4565,12 @@ export default function Home() {
                                 <CategoryIcon name={b.category.name} />
                                 <span>{b.category.name}</span>
                               </div>
-                              <div className={`text-sm ${b.spent === 0 ? "text-[#00CCCC]" : "text-[#ff5555]"}`}>{b.spent === 0 ? "—" : fmt(b.spent)}</div>
+                              <div className={`text-sm ${b.spent === 0 ? "text-[color:var(--mt-accent)]" : "text-[color:var(--mt-danger)]"}`}>{b.spent === 0 ? "—" : fmt(b.spent)}</div>
                             </div>
                             <div className={`mt-1 flex justify-between text-xs ${headingColor}`}>
                               <span>Budget {b.budget === 0 ? "—" : fmt(b.budget)}</span>
                               <span>
-                                Remaining <span className="text-white">{fmt(rem)}</span>
+                                Remaining <span className="text-[color:var(--mt-text)]">{fmt(rem)}</span>
                               </span>
                             </div>
                             <div className="mt-2 h-2 rounded bg-white/10">
@@ -4522,32 +4595,29 @@ export default function Home() {
                     <BudgetRemainingDonutChart segments={budgetRemainingSegments} total={budgetRemainingTotal} />
                   </div>
                   <div className={panelClass}>
-                    <div className={dashPanelHeaderClass}>Expenses</div>
-                    <div className="px-2.5 py-2">
-                      {txInMonth.filter((t) => t.type === "expense").map((t) => {
+                    <div className={dashPanelHeaderClass}>Recent Expense</div>
+                    <div className="grid gap-[10px] px-2.5 py-2">
+                      {recentExpenseCards.map((t) => {
                         const catName = categories.find((c) => c.id === t.category_id)?.name ?? "—";
                         const accName = accounts.find((a) => a.id === t.account_id)?.name ?? "—";
                         return (
-                        <div
-                          key={t.id}
-                          className={`border-b ${frameBorder} py-1.5 text-sm last:border-0`}
-                        >
-                          <div className="mb-0.5 flex justify-between">
-                            <button
-                              type="button"
-                              onClick={() => openEditExpense(t)}
-                              className={`text-left ${itemNameColor} hover:text-white`}
-                            >
-                              {t.name}
-                            </button>
-                            <span className="text-[#ff5555]">{fmt(t.amount)}</span>
+                          <div key={t.id} className={`rounded border ${frameBorder} bg-[var(--mt-card)] px-2.5 py-2 text-sm`}>
+                            <div className="mb-0.5 flex justify-between gap-3">
+                              <button
+                                type="button"
+                                onClick={() => openEditExpense(t)}
+                                className={`min-w-0 truncate text-left ${itemNameColor} hover:text-[color:var(--mt-text)]`}
+                              >
+                                {t.name}
+                              </button>
+                              <span className="shrink-0 text-[color:var(--mt-danger)]">-{fmt(t.amount)}</span>
+                            </div>
+                            <div className={`flex justify-between text-xs ${headingColor}`}>
+                              <CategoryBadge category={catName} />
+                              <span>{formatLongDate(t.date)}</span>
+                            </div>
+                            <div className={`mt-0.5 text-[11px] ${headingColor}`}>{accName}</div>
                           </div>
-                          <div className={`flex justify-between text-xs ${headingColor}`}>
-                            <CategoryBadge category={catName} />
-                            <span>{formatLongDate(t.date)}</span>
-                          </div>
-                          <div className={`mt-0.5 text-[11px] ${headingColor}`}>{accName}</div>
-                        </div>
                         );
                       })}
                     </div>
@@ -4635,15 +4705,15 @@ export default function Home() {
               <div className="grid gap-[10px] sm:grid-cols-3">
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Total income (all time)</div>
-                  <div className="text-[15px] text-white">{fmt(0)}</div>
+                  <div className="text-[15px] text-[color:var(--mt-text)]">{fmt(0)}</div>
                 </div>
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Total expenses (all time)</div>
-                  <div className="text-[15px] text-[#ff5555]">{fmt(totalSpent)}</div>
+                  <div className="text-[15px] text-[color:var(--mt-danger)]">{fmt(totalSpent)}</div>
                 </div>
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Net balance</div>
-                  <div className="text-[15px] text-[#00CCCC]">{fmt(totalAccountBalance)}</div>
+                  <div className="text-[15px] text-[color:var(--mt-accent)]">{fmt(totalAccountBalance)}</div>
                 </div>
               </div>
 
@@ -4653,7 +4723,7 @@ export default function Home() {
                   <button
                     type="button"
                     onClick={openAccount}
-                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
+                    className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
                   >
                     + Account
                   </button>
@@ -4679,15 +4749,22 @@ export default function Home() {
                         return (
                           <tr key={a.id} className={`border-b ${frameBorder} last:border-0`}>
                             <td className={`px-2.5 py-2.5 ${itemNameColor}`}>
-                              <button type="button" onClick={() => openAccountEdit(a)} className="text-left hover:text-white" title="Click to edit account">
+                              <button
+                                type="button"
+                                onClick={() => openAccountEdit(a)}
+                                className="text-left hover:text-[color:var(--mt-text)]"
+                                title="Click to edit account"
+                              >
                                 {a.name}
                               </button>
                             </td>
                             <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>
-                              <span className="text-white">{fmt(a.opening_balance)}</span>
+                              <span className="text-[color:var(--mt-text)]">{fmt(a.opening_balance)}</span>
                             </td>
-                            <td className="px-2.5 py-2.5 text-right text-white">{fmt(bal)}</td>
-                            <td className="px-2.5 py-2.5 text-right text-[#ff5555]">{monthAccExpense === 0 ? "—" : fmt(monthAccExpense)}</td>
+                            <td className="px-2.5 py-2.5 text-right text-[color:var(--mt-text)]">{fmt(bal)}</td>
+                            <td className="px-2.5 py-2.5 text-right text-[color:var(--mt-danger)]">
+                              {monthAccExpense === 0 ? "—" : fmt(monthAccExpense)}
+                            </td>
                             <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>{last ? formatLongDate(last) : "—"}</td>
                           </tr>
                         );
@@ -4766,6 +4843,7 @@ export default function Home() {
                       <tr className={tableHeadRowClass}>
                         <th className="px-2.5 py-2 text-left font-normal">Name</th>
                         <th className="px-2.5 py-2 text-right font-normal">Due</th>
+                        <th className="px-2.5 py-2 text-right font-normal">Paid</th>
                         <th className="px-2.5 py-2 text-right font-normal">Amount</th>
                         <th className="px-2.5 py-2 text-right font-normal">Status</th>
                       </tr>
@@ -4779,16 +4857,13 @@ export default function Home() {
                               {bill.name}
                             </button>
                           </td>
+                          <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>{bill.due_date ? formatLongDate(bill.due_date) : "—"}</td>
                           <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>
-                            <div className="flex flex-col items-end leading-tight">
-                              <div>{bill.due_date ? formatLongDate(bill.due_date) : "—"}</div>
-                              <div className={`mt-0.5 text-[11px] ${headingColor}`}>
-                                PAID{" "}
-                                <span className={bill.paid && bill.paid_at ? "text-[#00CCCC]" : "text-white/40"}>
-                                  {bill.paid && bill.paid_at ? formatLongDate(bill.paid_at) : "—"}
-                                </span>
-                              </div>
-                            </div>
+                            {bill.paid && bill.paid_at ? (
+                              <span className="text-[color:var(--mt-accent)]">{formatLongDate(bill.paid_at)}</span>
+                            ) : (
+                              "—"
+                            )}
                           </td>
                           <td className="px-2.5 py-2.5 text-right">
                             <input
@@ -4844,7 +4919,7 @@ export default function Home() {
                       const remaining = budgetAmt - spentAmt;
                       const usedPct = budgetAmt > 0 ? Math.min(spentAmt / budgetAmt, 1) : 0;
                       const usagePctDisplay = budgetAmt > 0 ? usedPct * 100 : null;
-                      const warn = usedPct >= 0.85;
+                      const warn = usedPct >= 0.9;
                       const fillClass = warn ? "bg-[#ff5555]" : "bg-[#00CCCC]";
                       const dot = resolveExpenseCategoryDisplayColor(b.category);
                       const budgetSharePct = budgetShareDenominator > 0 ? (budgetAmt / budgetShareDenominator) * 100 : 0;
@@ -5055,7 +5130,7 @@ export default function Home() {
               <div className="grid gap-[10px] sm:grid-cols-3">
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Total expense (this month)</div>
-                  <div className="text-[15px] text-[#ff5555]">{fmt(monthSpent)}</div>
+                  <div className="text-[15px] text-[color:var(--mt-danger)]">{fmt(monthSpent)}</div>
                 </div>
               </div>
               <div className="grid items-start gap-[10px] lg:grid-cols-[minmax(0,1fr)_minmax(260px,300px)]">
@@ -5075,17 +5150,20 @@ export default function Home() {
                       <tbody>
                         {txInMonth
                           .filter((t) => t.type === "expense")
+                          .slice()
+                          .sort((a, b) => b.date.localeCompare(a.date))
                           .map((t) => {
                             const acc = accounts.find((a) => a.id === t.account_id)?.name ?? "—";
                             const cat = categories.find((c) => c.id === t.category_id)?.name ?? "—";
                             return (
                               <tr key={t.id} className={`border-b ${frameBorder} last:border-0`}>
                                 <td className={`max-w-[140px] truncate px-2 py-1.5 ${itemNameColor}`}>
-                                  <button onClick={() => openEditExpense(t)} className="text-left hover:text-white">
+                                  <button onClick={() => openEditExpense(t)} className="text-left hover:text-[color:var(--mt-text)]">
                                     {t.name}
                                   </button>
+                                  {t.note?.trim() ? <div className={`mt-0.5 truncate text-[11px] ${headingColor}`}>{t.note}</div> : null}
                                 </td>
-                                <td className="whitespace-nowrap px-2 py-1.5 text-right text-[#ff5555]">{fmt(t.amount)}</td>
+                                <td className="whitespace-nowrap px-2 py-1.5 text-right text-[color:var(--mt-danger)]">{fmt(t.amount)}</td>
                                 <td className={`whitespace-nowrap px-2 py-1.5 text-right ${itemNameColor}`}>{formatLongDate(t.date)}</td>
                                 <td className={`hidden px-2 py-1.5 text-right sm:table-cell`}>
                                   <span className="flex justify-end">
