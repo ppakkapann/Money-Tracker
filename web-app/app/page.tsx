@@ -90,7 +90,7 @@ const EXPENSE_CATEGORY_ORDER = [
 
 // Bright palette (aligned to reference swatches; optimized for contrast on dark Ocean UI)
 const EXPENSE_CATEGORY_COLORS: Record<(typeof EXPENSE_CATEGORY_ORDER)[number], string> = {
-  "Bills & Utilities": "#E64B5D", // energetic red
+  "Bills & Utilities": "#FF4FA3", // pink (avoid clash with over-budget red)
   "Food & Dining": "#FF8A3D", // orange
   Housing: "#4E6BFF", // blue
   Shopping: "#F2C94C", // yellow
@@ -229,6 +229,71 @@ const CategoryIcon = ({ name, className }: { name: string; className?: string })
   );
 };
 
+type NavPage = "dashboard" | "accounts" | "bills" | "categories" | "expenses" | "income";
+
+const NavIcon = ({ page, className }: { page: NavPage; className?: string }) => {
+  const cn = className ?? "h-[18px] w-[18px] shrink-0 opacity-90";
+  const s = {
+    fill: "none" as const,
+    stroke: "currentColor",
+    strokeWidth: 1.75,
+    strokeLinecap: "round" as const,
+    strokeLinejoin: "round" as const,
+  };
+  switch (page) {
+    case "dashboard":
+      return (
+        <svg className={cn} viewBox="0 0 24 24" aria-hidden>
+          <rect {...s} x="3" y="3" width="8" height="9" rx="1.5" />
+          <rect {...s} x="13" y="3" width="8" height="5" rx="1.5" />
+          <rect {...s} x="13" y="11" width="8" height="10" rx="1.5" />
+          <rect {...s} x="3" y="15" width="8" height="6" rx="1.5" />
+        </svg>
+      );
+    case "accounts":
+      return (
+        <svg className={cn} viewBox="0 0 24 24" aria-hidden>
+          <rect {...s} x="3" y="5" width="18" height="14" rx="2" />
+          <path {...s} d="M7 10h10" />
+          <path {...s} d="M7 14h6" />
+        </svg>
+      );
+    case "bills":
+      return (
+        <svg className={cn} viewBox="0 0 24 24" aria-hidden>
+          <path {...s} d="M7 4h10v16l-2-1-2 1-2-1-2 1-2-1-2 1V4z" />
+          <path {...s} d="M10 9h4" />
+        </svg>
+      );
+    case "categories":
+      return (
+        <svg className={cn} viewBox="0 0 24 24" aria-hidden>
+          <path {...s} d="M4 7h7v7H4zM13 7h7v4h-7zM13 16h7v4h-7zM4 18h7v-4H4z" />
+        </svg>
+      );
+    case "expenses":
+      return (
+        <svg className={cn} viewBox="0 0 24 24" aria-hidden>
+          <path {...s} d="M7 8l10 10M17 8L7 18" />
+          <circle {...s} cx="9" cy="9" r="2" />
+        </svg>
+      );
+    case "income":
+      return (
+        <svg className={cn} viewBox="0 0 24 24" aria-hidden>
+          <path {...s} d="M12 5v14M8 10l4-4 4 4" />
+          <path {...s} d="M6 19h12" />
+        </svg>
+      );
+    default:
+      return (
+        <svg className={cn} viewBox="0 0 24 24" aria-hidden>
+          <circle {...s} cx="12" cy="12" r="8" />
+        </svg>
+      );
+  }
+};
+
 // Data is loaded from Supabase (Milestone 2+). The UI used to have hardcoded mock arrays.
 
 const pageOrder = ["dashboard", "accounts", "bills", "categories", "expenses", "income"] as const;
@@ -246,7 +311,7 @@ const todayIsoLocal = () => {
 };
 
 const frameBorder = "border-[color:var(--mt-border)]";
-const panelClass = `overflow-hidden rounded border ${frameBorder} bg-[var(--mt-panel)]`;
+const panelClass = `overflow-hidden rounded-2xl border ${frameBorder} bg-[var(--mt-panel)]`;
 const headingColor = "text-[color:var(--mt-heading)]";
 const itemNameColor = "text-[color:var(--mt-muted)]";
 // Table header row: no bottom border (avoids double-line vs first data row).
@@ -258,7 +323,7 @@ const panelHeaderClass =
 const dashPanelHeaderClass =
   `relative z-20 flex items-center justify-between bg-white/[0.02] px-2.5 py-2 text-sm font-semibold tracking-[0.2px] ${headingColor}`;
 
-const summaryCardClass = `rounded border ${frameBorder} bg-[var(--mt-card)] px-3 py-2.5`;
+const summaryCardClass = `rounded-2xl border ${frameBorder} bg-[var(--mt-card)] p-4 shadow-[0_10px_30px_rgba(0,0,0,0.22)]`;
 
 export default function Home() {
   const supabase = useMemo(() => supabaseBrowser(), []);
@@ -288,12 +353,19 @@ export default function Home() {
     x: number;
     y: number;
   } | null>(null);
+  const [hoveredBudgetByCategoryBar, setHoveredBudgetByCategoryBar] = useState<{
+    text: string;
+    color: string;
+    x: number;
+    y: number;
+  } | null>(null);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
     const clear = () => {
       setHoveredExpenseDonut(null);
       setHoveredBudgetRemainingDonut(null);
+      setHoveredBudgetByCategoryBar(null);
     };
     window.addEventListener("blur", clear);
     window.addEventListener("mouseleave", clear);
@@ -313,17 +385,33 @@ export default function Home() {
   const [goalOpen, setGoalOpen] = useState(false);
   const [goalEditOpen, setGoalEditOpen] = useState(false);
   const [goalEditId, setGoalEditId] = useState<string | null>(null);
-  const [goalEditDraft, setGoalEditDraft] = useState<{ name: string; goal_amount: string; balance_amount: string; color: string }>({
+  const [goalAddCalendarOpen, setGoalAddCalendarOpen] = useState(false);
+  const [goalAddCalMonth, setGoalAddCalMonth] = useState(() => new Date().getMonth());
+  const [goalAddCalYear, setGoalAddCalYear] = useState(() => new Date().getFullYear());
+  const [goalEditCalendarOpen, setGoalEditCalendarOpen] = useState(false);
+  const [goalEditCalMonth, setGoalEditCalMonth] = useState(() => new Date().getMonth());
+  const [goalEditCalYear, setGoalEditCalYear] = useState(() => new Date().getFullYear());
+  const [goalEditDraft, setGoalEditDraft] = useState<{
+    name: string;
+    goal_amount: string;
+    balance_amount: string;
+    goal_date: string;
+    color: string;
+  }>({
     name: "",
     goal_amount: "",
     balance_amount: "",
+    goal_date: "",
     color: "#103544",
   });
-  const [goals, setGoals] = useState<Array<{ id: string; name: string; goal_amount: string; balance_amount: string; color?: string }>>([]);
-  const [goalAddDraft, setGoalAddDraft] = useState<{ name: string; goal_amount: string; balance_amount: string; color: string }>({
+  const [goals, setGoals] = useState<
+    Array<{ id: string; name: string; goal_amount: string; balance_amount: string; goal_date?: string; color?: string }>
+  >([]);
+  const [goalAddDraft, setGoalAddDraft] = useState<{ name: string; goal_amount: string; balance_amount: string; goal_date: string; color: string }>({
     name: "",
     goal_amount: "",
     balance_amount: "",
+    goal_date: "",
     color: "#103544",
   });
 
@@ -343,8 +431,9 @@ export default function Home() {
                   const goal_amount = typeof g.goal_amount === "string" ? g.goal_amount : "";
                   const balance_amount = typeof g.balance_amount === "string" ? g.balance_amount : "";
                   const color = typeof (g as any).color === "string" ? String((g as any).color) : "#103544";
+                  const goal_date = typeof (g as any).goal_date === "string" ? String((g as any).goal_date) : "";
                   if (!name.trim()) return null;
-                  return { id, name, goal_amount, balance_amount, color };
+                  return { id, name, goal_amount, balance_amount, goal_date, color };
                 })
                 .filter(Boolean)
             : null;
@@ -383,7 +472,24 @@ export default function Home() {
   const openGoalEdit = (g: (typeof goals)[number]) => {
     setAuthError(null);
     setGoalEditId(g.id);
-    setGoalEditDraft({ name: g.name, goal_amount: g.goal_amount, balance_amount: g.balance_amount, color: g.color ?? "#103544" });
+    setGoalEditCalendarOpen(false);
+    try {
+      const iso = (g as any).goal_date ? String((g as any).goal_date) : "";
+      const d = iso ? new Date(`${iso}T00:00:00`) : new Date();
+      if (!Number.isNaN(d.getTime())) {
+        setGoalEditCalMonth(d.getMonth());
+        setGoalEditCalYear(d.getFullYear());
+      }
+    } catch {
+      // ignore
+    }
+    setGoalEditDraft({
+      name: g.name,
+      goal_amount: g.goal_amount,
+      balance_amount: g.balance_amount,
+      goal_date: (g as any).goal_date ?? "",
+      color: g.color ?? "#103544",
+    });
     setGoalEditOpen(true);
   };
 
@@ -397,7 +503,14 @@ export default function Home() {
     setGoals((prev) =>
       prev.map((g) =>
         g.id === goalEditId
-          ? { ...g, name, goal_amount: goalEditDraft.goal_amount.trim(), balance_amount: goalEditDraft.balance_amount.trim(), color: goalEditDraft.color }
+          ? {
+              ...g,
+              name,
+              goal_amount: goalEditDraft.goal_amount.trim(),
+              balance_amount: goalEditDraft.balance_amount.trim(),
+              goal_date: goalEditDraft.goal_date.trim(),
+              color: goalEditDraft.color,
+            }
           : g,
       ),
     );
@@ -1442,6 +1555,7 @@ export default function Home() {
   const [billPaidConfirmOpen, setBillPaidConfirmOpen] = useState(false);
   const [billPaidConfirmIndex, setBillPaidConfirmIndex] = useState<number | null>(null);
   const [billPaidConfirmNextPaid, setBillPaidConfirmNextPaid] = useState<boolean>(true);
+  const [dashBillsShowAll, setDashBillsShowAll] = useState(false);
   const [billDraft, setBillDraft] = useState<{
     name: string;
     account_id: string;
@@ -1935,6 +2049,20 @@ export default function Home() {
   const monthEnd = new Date(year, monthIndex + 1, 0); // last day
   const monthEndIso = `${monthKey}-${String(monthEnd.getDate()).padStart(2, "0")}`;
 
+  const prevMonthKey = useMemo(() => addMonthsToKey(monthKey, -1), [monthKey]);
+  const prevMonthStart = `${prevMonthKey}-01`;
+  const prevMonthEnd = useMemo(() => {
+    const yyyy = Number(prevMonthKey.slice(0, 4));
+    const mm = Number(prevMonthKey.slice(5, 7));
+    return new Date(yyyy, mm, 0);
+  }, [prevMonthKey]);
+  const prevMonthEndIso = `${prevMonthKey}-${String(prevMonthEnd.getDate()).padStart(2, "0")}`;
+
+  const prevTxInMonth = useMemo(
+    () => transactions.filter((t) => t.date >= prevMonthStart && t.date <= prevMonthEndIso),
+    [prevMonthEndIso, prevMonthStart, transactions],
+  );
+
   const txInMonth = useMemo(
     () => transactions.filter((t) => t.date >= monthStart && t.date <= monthEndIso),
     [transactions, monthEndIso, monthStart],
@@ -1948,7 +2076,7 @@ export default function Home() {
     return txInMonth
       .filter((t) => t.type === "expense" && t.date >= cutoffIso)
       .sort((a, b) => b.date.localeCompare(a.date))
-      .slice(0, 12);
+      .slice(0, 8);
   }, [txInMonth]);
 
   const hiddenCategoryIdsForMonth = useMemo(() => {
@@ -1967,6 +2095,16 @@ export default function Home() {
     () => txInMonth.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0),
     [txInMonth],
   );
+
+  const prevMonthIncome = useMemo(
+    () => prevTxInMonth.filter((t) => t.type === "income").reduce((s, t) => s + t.amount, 0),
+    [prevTxInMonth],
+  );
+  const prevMonthSpent = useMemo(
+    () => prevTxInMonth.filter((t) => t.type === "expense").reduce((s, t) => s + t.amount, 0),
+    [prevTxInMonth],
+  );
+  const prevMonthNet = useMemo(() => prevMonthIncome - prevMonthSpent, [prevMonthIncome, prevMonthSpent]);
 
   const spentByCategoryId = useMemo(() => {
     const m = new Map<string, number>();
@@ -2392,6 +2530,24 @@ export default function Home() {
     return Array.from(byId.values()).reduce((s, n) => s + n, 0);
   }, [accounts, transactions]);
 
+  const totalAccountBalancePrevMonthEnd = useMemo(() => {
+    const cutoff = prevMonthEndIso;
+    const byId = new Map<string, number>();
+    accounts.forEach((a) => byId.set(a.id, a.opening_balance));
+
+    transactions.forEach((t) => {
+      if (t.date > cutoff) return;
+      if (t.type === "income" && t.account_id) byId.set(t.account_id, (byId.get(t.account_id) ?? 0) + t.amount);
+      if (t.type === "expense" && t.account_id) byId.set(t.account_id, (byId.get(t.account_id) ?? 0) - t.amount);
+      if (t.type === "transfer" && t.from_account_id && t.to_account_id) {
+        byId.set(t.from_account_id, (byId.get(t.from_account_id) ?? 0) - t.amount);
+        byId.set(t.to_account_id, (byId.get(t.to_account_id) ?? 0) + t.amount);
+      }
+    });
+
+    return Array.from(byId.values()).reduce((s, n) => s + n, 0);
+  }, [accounts, prevMonthEndIso, transactions]);
+
   const balanceByAccountId = useMemo(() => {
     const byId = new Map<string, number>();
     accounts.forEach((a) => byId.set(a.id, a.opening_balance));
@@ -2449,6 +2605,13 @@ export default function Home() {
 
   const totalIncome = monthIncome;
   const totalSpent = monthSpent;
+  const totalNet = monthIncome - monthSpent;
+
+  const fmtPct = (n: number) => `${Math.abs(n).toFixed(1)}%`;
+  const pctChange = (current: number, prev: number) => {
+    if (!Number.isFinite(prev) || prev === 0) return null;
+    return ((current - prev) / Math.abs(prev)) * 100;
+  };
 
   const categoriesRows = useMemo(
     () => [
@@ -2581,7 +2744,7 @@ export default function Home() {
 
     return (
       <span
-        className="inline-flex rounded px-2 py-0.5 text-xs font-medium"
+        className="inline-flex rounded px-2 py-[3px] text-[11px] font-medium leading-none"
         style={{ backgroundColor: bg, color: fg }}
       >
         {category}
@@ -2641,81 +2804,106 @@ export default function Home() {
 
   return (
     <div className="flex h-screen bg-[var(--mt-bg)] font-sans text-[15px] leading-[1.4] text-[var(--mt-text)]">
-      <aside className={`hidden w-[180px] shrink-0 flex-col border-r ${frameBorder} bg-[var(--mt-panel)] sm:flex lg:w-[150px]`}>
-        <div className={`border-b ${frameBorder} px-3.5 py-2 text-xs font-medium leading-[1.5] tracking-[0.7px] text-[color:var(--mt-accent)]`}>
-          <div>MONEY TRACKER</div>
+      <aside className={`hidden w-[198px] shrink-0 flex-col border-r ${frameBorder} bg-[var(--mt-card)] sm:flex`}>
+        <div className={`flex items-center gap-2 border-b ${frameBorder} px-3 py-3`}>
+          <span className="h-2 w-2 shrink-0 rounded-full bg-[color:var(--mt-accent)] shadow-[0_0_12px_color-mix(in_oklab,var(--mt-accent)_55%,transparent)]" aria-hidden />
+          <div className="text-[11px] font-semibold uppercase tracking-[0.65px] text-[color:var(--mt-text)]">Money Tracker</div>
         </div>
-        <nav className="flex-1 py-1">
+        <nav className="flex flex-1 flex-col px-2 py-3">
           {pageOrder.map((page) => (
-              <button
+            <button
               key={page}
+              type="button"
               onClick={() => setActivePage(page)}
-              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm capitalize transition ${
+              className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-[13px] capitalize transition-colors ${
                 activePage === page
-                  ? "bg-white/[0.03] text-[color:var(--mt-text)]"
-                  : `${headingColor} hover:bg-white/[0.02] hover:text-[color:var(--mt-text)]`
+                  ? "font-medium text-[color:var(--mt-accent)]"
+                  : `${headingColor} hover:text-[color:var(--mt-text)]`
               }`}
             >
-              {page}
+              <NavIcon page={page} />
+              <span className="truncate">{page}</span>
             </button>
           ))}
         </nav>
       </aside>
 
       <main className="flex min-w-0 flex-1 flex-col overflow-hidden">
-        <div className={`sticky top-0 z-10 flex items-center justify-between border-b ${frameBorder} bg-[var(--mt-panel)]/80 px-3.5 py-2 backdrop-blur`}>
-          <div className="pointer-events-none flex items-center gap-2" />
-
-          <div className="pointer-events-auto absolute left-1/2 flex -translate-x-1/2 items-center gap-2">
-            <button
-              onClick={() => changeMonth(-1)}
-              className={`flex h-5 w-5 items-center justify-center rounded border ${frameBorder} bg-white/[0.02] text-sm ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
+        <div
+          className={`sticky top-0 z-10 flex flex-wrap items-center justify-between gap-3 border-b ${frameBorder} bg-[var(--mt-bg)]/85 px-3.5 py-3 backdrop-blur-md sm:gap-4`}
+        >
+          <div className="flex min-w-0 flex-1 items-center justify-start sm:flex-none">
+            <div
+              className={`inline-flex items-center gap-1 rounded-full border border-white/12 bg-white/[0.06] px-1 py-1 pl-2 pr-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]`}
             >
-              ‹
-            </button>
-            <span className="text-sm font-medium text-[color:var(--mt-text)]">{`${MONTHS[monthIndex]} ${year}`}</span>
-            <button
-              onClick={() => changeMonth(1)}
-              className={`flex h-5 w-5 items-center justify-center rounded border ${frameBorder} bg-white/[0.02] text-sm ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
-            >
-              ›
-            </button>
+              <button
+                type="button"
+                onClick={() => changeMonth(-1)}
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[color:var(--mt-muted)] transition hover:bg-white/[0.06] hover:text-[color:var(--mt-text)]`}
+                aria-label="Previous month"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M14 6l-6 6 6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+              <span className="min-w-[8.5rem] text-center text-sm font-medium tabular-nums text-[color:var(--mt-text)] sm:min-w-[9.5rem]">{`${MONTHS[monthIndex]} ${year}`}</span>
+              <button
+                type="button"
+                onClick={() => changeMonth(1)}
+                className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[color:var(--mt-muted)] transition hover:bg-white/[0.06] hover:text-[color:var(--mt-text)]`}
+                aria-label="Next month"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <path d="M10 6l6 6-6 6" stroke="currentColor" strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+              </button>
+            </div>
           </div>
-          <div className="pointer-events-auto flex gap-1.5">
-            <button onClick={openExpense} className="rounded bg-[color:var(--mt-danger)] px-2.5 py-1 text-sm font-medium text-[color:var(--mt-text)]">
+
+          <div className="flex flex-wrap items-center justify-end gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={openExpense}
+              className="rounded-full border border-[color:var(--mt-danger)]/35 bg-[color:var(--mt-danger)]/12 px-4 py-2 text-sm font-medium text-[color:var(--mt-danger)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[color:var(--mt-danger)]/18"
+            >
               + Expense
             </button>
             <button
+              type="button"
               onClick={openIncome}
-              className="rounded bg-[#00CCCC] px-2.5 py-1 text-sm font-medium text-[#111]"
+              className="rounded-full border border-teal-400/35 bg-teal-400/10 px-4 py-2 text-sm font-medium text-teal-300 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-teal-400/16"
             >
               + Income
             </button>
             <button
+              type="button"
               onClick={openTransfer}
-              className={`rounded border ${frameBorder} bg-white/[0.02] px-2.5 py-1 text-sm font-medium ${headingColor}`}
+              className={`rounded-full border border-white/18 bg-white/[0.06] px-4 py-2 text-sm font-medium text-white/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-white/[0.1] hover:text-[color:var(--mt-text)]`}
             >
               + Transfer
             </button>
             {activePage === "categories" && (
               <button
+                type="button"
                 onClick={openCategory}
-                className={`rounded border ${frameBorder} bg-white/[0.02] px-2.5 py-1 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
+                className={`rounded-full border border-white/18 bg-white/[0.06] px-4 py-2 text-sm font-medium text-white/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-white/[0.1] hover:text-[color:var(--mt-text)]`}
               >
                 + Category
               </button>
             )}
             {activePage === "bills" && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
+                  type="button"
                   onClick={openBill}
-                  className={`rounded border ${frameBorder} bg-white/[0.02] px-2.5 py-1 text-sm font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
+                  className={`rounded-full border border-white/18 bg-white/[0.06] px-4 py-2 text-sm font-medium text-white/75 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-white/[0.1] hover:text-[color:var(--mt-text)]`}
                 >
                   + Bill
                 </button>
                 <button
+                  type="button"
                   onClick={deleteAllBillsThisMonth}
-                  className={`rounded border ${frameBorder} bg-white/[0.02] px-2.5 py-1 text-sm font-medium text-[#ff5555] hover:bg-white/[0.04] disabled:opacity-60`}
+                  className="rounded-full border border-[color:var(--mt-danger)]/35 bg-[color:var(--mt-danger)]/10 px-4 py-2 text-sm font-medium text-[color:var(--mt-danger)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-[color:var(--mt-danger)]/16 disabled:opacity-60"
                   disabled={billSaving}
                   title="Delete all bills in this month"
                 >
@@ -3430,6 +3618,112 @@ export default function Home() {
                       />
                     </div>
                   </div>
+                  <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Goal date</label>
+                    <div className="relative mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setGoalAddCalendarOpen((v) => !v)}
+                        className={`flex w-full items-center justify-between rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
+                      >
+                        <span>{goalAddDraft.goal_date ? formatLongDate(goalAddDraft.goal_date) : "Select date"}</span>
+                        <span className={headingColor}>▾</span>
+                      </button>
+
+                      {goalAddCalendarOpen && (
+                        <div className={`absolute left-0 top-[44px] z-10 w-[260px] rounded border ${frameBorder} bg-[var(--mt-panel)] p-3`}>
+                          <div className={`mb-2 flex items-center justify-between text-xs uppercase tracking-[0.5px] ${headingColor}`}>
+                            <span>{`${MONTHS[goalAddCalMonth]} ${goalAddCalYear}`}</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const m = goalAddCalMonth - 1;
+                                  if (m < 0) {
+                                    setGoalAddCalMonth(11);
+                                    setGoalAddCalYear((y) => y - 1);
+                                  } else {
+                                    setGoalAddCalMonth(m);
+                                  }
+                                }}
+                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
+                              >
+                                ‹
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const m = goalAddCalMonth + 1;
+                                  if (m > 11) {
+                                    setGoalAddCalMonth(0);
+                                    setGoalAddCalYear((y) => y + 1);
+                                  } else {
+                                    setGoalAddCalMonth(m);
+                                  }
+                                }}
+                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
+                              >
+                                ›
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setGoalAddCalendarOpen(false)}
+                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className={`grid grid-cols-7 gap-1 text-center text-[11px] ${headingColor}`}>
+                            {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+                              <div key={`${d}-${i}`} className="py-1">
+                                {d}
+                              </div>
+                            ))}
+                          </div>
+
+                          {(() => {
+                            const firstDow = new Date(goalAddCalYear, goalAddCalMonth, 1).getDay();
+                            const daysInMonth = new Date(goalAddCalYear, goalAddCalMonth + 1, 0).getDate();
+                            const selectedDay = goalAddDraft.goal_date ? Number(goalAddDraft.goal_date.slice(-2)) : -1;
+                            const selectedMonth = goalAddDraft.goal_date ? Number(goalAddDraft.goal_date.slice(5, 7)) - 1 : -1;
+                            const selectedYear = goalAddDraft.goal_date ? Number(goalAddDraft.goal_date.slice(0, 4)) : -1;
+                            const cells: (number | null)[] = [];
+                            for (let i = 0; i < firstDow; i++) cells.push(null);
+                            for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+                            while (cells.length % 7 !== 0) cells.push(null);
+                            return (
+                              <div className="mt-1 grid grid-cols-7 gap-1">
+                                {cells.map((d, i) => {
+                                  if (!d) return <div key={`g-${i}`} className="h-8" />;
+                                  const isSel = d === selectedDay && selectedMonth === goalAddCalMonth && selectedYear === goalAddCalYear;
+                                  return (
+                                    <button
+                                      key={`gd-${d}-${i}`}
+                                      type="button"
+                                      onClick={() => {
+                                        const iso = `${goalAddCalYear}-${String(goalAddCalMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                                        setGoalAddDraft((p) => ({ ...p, goal_date: iso }));
+                                        setGoalAddCalendarOpen(false);
+                                      }}
+                                      className={`h-8 rounded border text-sm ${
+                                        isSel
+                                          ? "border-[color:var(--mt-accent)] bg-[color:var(--mt-accent)]/10 text-[color:var(--mt-text)]"
+                                          : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`
+                                      }`}
+                                    >
+                                      {d}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 <div className={`flex items-center justify-end gap-2 border-t ${frameBorder} px-3.5 py-2.5`}>
@@ -3457,6 +3751,7 @@ export default function Home() {
                           name,
                           goal_amount: goalAddDraft.goal_amount.trim(),
                           balance_amount: goalAddDraft.balance_amount.trim(),
+                          goal_date: goalAddDraft.goal_date.trim(),
                           color: goalAddDraft.color,
                         },
                       ]);
@@ -3519,6 +3814,112 @@ export default function Home() {
                       />
                     </div>
                   </div>
+                  <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Goal date</label>
+                    <div className="relative mt-1">
+                      <button
+                        type="button"
+                        onClick={() => setGoalEditCalendarOpen((v) => !v)}
+                        className={`flex w-full items-center justify-between rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-2 text-sm text-[color:var(--mt-text)]`}
+                      >
+                        <span>{goalEditDraft.goal_date ? formatLongDate(goalEditDraft.goal_date) : "Select date"}</span>
+                        <span className={headingColor}>▾</span>
+                      </button>
+
+                      {goalEditCalendarOpen && (
+                        <div className={`absolute left-0 top-[44px] z-10 w-[260px] rounded border ${frameBorder} bg-[var(--mt-panel)] p-3`}>
+                          <div className={`mb-2 flex items-center justify-between text-xs uppercase tracking-[0.5px] ${headingColor}`}>
+                            <span>{`${MONTHS[goalEditCalMonth]} ${goalEditCalYear}`}</span>
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const m = goalEditCalMonth - 1;
+                                  if (m < 0) {
+                                    setGoalEditCalMonth(11);
+                                    setGoalEditCalYear((y) => y - 1);
+                                  } else {
+                                    setGoalEditCalMonth(m);
+                                  }
+                                }}
+                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
+                              >
+                                ‹
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  const m = goalEditCalMonth + 1;
+                                  if (m > 11) {
+                                    setGoalEditCalMonth(0);
+                                    setGoalEditCalYear((y) => y + 1);
+                                  } else {
+                                    setGoalEditCalMonth(m);
+                                  }
+                                }}
+                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
+                              >
+                                ›
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => setGoalEditCalendarOpen(false)}
+                                className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
+                              >
+                                ✕
+                              </button>
+                            </div>
+                          </div>
+
+                          <div className={`grid grid-cols-7 gap-1 text-center text-[11px] ${headingColor}`}>
+                            {["S", "M", "T", "W", "T", "F", "S"].map((d, i) => (
+                              <div key={`${d}-${i}`} className="py-1">
+                                {d}
+                              </div>
+                            ))}
+                          </div>
+
+                          {(() => {
+                            const firstDow = new Date(goalEditCalYear, goalEditCalMonth, 1).getDay();
+                            const daysInMonth = new Date(goalEditCalYear, goalEditCalMonth + 1, 0).getDate();
+                            const selectedDay = goalEditDraft.goal_date ? Number(goalEditDraft.goal_date.slice(-2)) : -1;
+                            const selectedMonth = goalEditDraft.goal_date ? Number(goalEditDraft.goal_date.slice(5, 7)) - 1 : -1;
+                            const selectedYear = goalEditDraft.goal_date ? Number(goalEditDraft.goal_date.slice(0, 4)) : -1;
+                            const cells: (number | null)[] = [];
+                            for (let i = 0; i < firstDow; i++) cells.push(null);
+                            for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+                            while (cells.length % 7 !== 0) cells.push(null);
+                            return (
+                              <div className="mt-1 grid grid-cols-7 gap-1">
+                                {cells.map((d, i) => {
+                                  if (!d) return <div key={`ge-${i}`} className="h-8" />;
+                                  const isSel = d === selectedDay && selectedMonth === goalEditCalMonth && selectedYear === goalEditCalYear;
+                                  return (
+                                    <button
+                                      key={`ged-${d}-${i}`}
+                                      type="button"
+                                      onClick={() => {
+                                        const iso = `${goalEditCalYear}-${String(goalEditCalMonth + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                                        setGoalEditDraft((p) => ({ ...p, goal_date: iso }));
+                                        setGoalEditCalendarOpen(false);
+                                      }}
+                                      className={`h-8 rounded border text-sm ${
+                                        isSel
+                                          ? "border-[color:var(--mt-accent)] bg-[color:var(--mt-accent)]/10 text-[color:var(--mt-text)]"
+                                          : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`
+                                      }`}
+                                    >
+                                      {d}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
 
                 <div className={`flex items-center justify-end gap-2 border-t ${frameBorder} px-3.5 py-2.5`}>
@@ -3576,14 +3977,11 @@ export default function Home() {
                     <div className="mt-2 flex flex-wrap gap-2">
                       {[
                         { label: "None", value: "" },
-                        { label: "Navy", value: "#102033" },
-                        { label: "Teal", value: "#022d29" },
-                        { label: "Olive", value: "#1e261d" },
-                        { label: "Underworld", value: "#23231b" },
-                        { label: "Wine", value: "#1e1d28" },
-                        { label: "Wood", value: "#191010" },
-                        { label: "Carob", value: "#19170b" },
-                        { label: "Gray", value: "#161616" },
+                        { label: "Blue", value: "#3B82F6" },
+                        { label: "Teal", value: "#14B8A6" },
+                        { label: "Green", value: "#22C55E" },
+                        { label: "Amber", value: "#F59E0B" },
+                        { label: "Pink", value: "#EC4899" },
                       ].map((c) => {
                         const sel = accountDraft.color === c.value;
                         return (
@@ -3592,11 +3990,17 @@ export default function Home() {
                             type="button"
                             onClick={() => setAccountDraft((d) => ({ ...d, color: c.value }))}
                             className={`rounded border px-2.5 py-1.5 text-[11px] font-medium ${
-                              sel ? "border-[#444747] bg-black text-white" : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
+                              sel
+                                ? "border-[color:var(--mt-border)] bg-[var(--mt-card)] text-[color:var(--mt-text)]"
+                                : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`
                             }`}
                           >
                             <span className="inline-flex items-center gap-2">
-                              {c.value ? <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value }} /> : <span className="h-2.5 w-2.5 rounded-full bg-white/10" />}
+                              {c.value ? (
+                                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value, opacity: 0.1 }} />
+                              ) : (
+                                <span className="h-2.5 w-2.5 rounded-full bg-white/10" />
+                              )}
                               <span>{c.label}</span>
                             </span>
                           </button>
@@ -3663,14 +4067,11 @@ export default function Home() {
                     <div className="mt-2 flex flex-wrap gap-2">
                       {[
                         { label: "None", value: "" },
-                        { label: "Navy", value: "#102033" },
-                        { label: "Teal", value: "#022d29" },
-                        { label: "Olive", value: "#1e261d" },
-                        { label: "Underworld", value: "#23231b" },
-                        { label: "Wine", value: "#1e1d28" },
-                        { label: "Wood", value: "#191010" },
-                        { label: "Carob", value: "#19170b" },
-                        { label: "Gray", value: "#161616" },
+                        { label: "Blue", value: "#3B82F6" },
+                        { label: "Teal", value: "#14B8A6" },
+                        { label: "Green", value: "#22C55E" },
+                        { label: "Amber", value: "#F59E0B" },
+                        { label: "Pink", value: "#EC4899" },
                       ].map((c) => {
                         const sel = accountEditDraft.color === c.value;
                         return (
@@ -3679,11 +4080,17 @@ export default function Home() {
                             type="button"
                             onClick={() => setAccountEditDraft((d) => ({ ...d, color: c.value }))}
                             className={`rounded border px-2.5 py-1.5 text-[11px] font-medium ${
-                              sel ? "border-[#444747] bg-black text-white" : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-white`
+                              sel
+                                ? "border-[color:var(--mt-border)] bg-[var(--mt-card)] text-[color:var(--mt-text)]"
+                                : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`
                             }`}
                           >
                             <span className="inline-flex items-center gap-2">
-                              {c.value ? <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value }} /> : <span className="h-2.5 w-2.5 rounded-full bg-white/10" />}
+                              {c.value ? (
+                                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value, opacity: 0.1 }} />
+                              ) : (
+                                <span className="h-2.5 w-2.5 rounded-full bg-white/10" />
+                              )}
                               <span>{c.label}</span>
                             </span>
                           </button>
@@ -4353,27 +4760,144 @@ export default function Home() {
 
           {activePage === "dashboard" && (
             <>
-              <div className="mb-[10px] grid gap-[10px] sm:grid-cols-2 lg:grid-cols-4">
-                <div className={summaryCardClass}>
-                  <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Income</div>
-                  <div className="text-[15px] text-[color:var(--mt-text)]">{fmt(totalIncome)}</div>
-                </div>
-                <div className={summaryCardClass}>
-                  <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Spent</div>
-                  <div className="text-[15px] text-[color:var(--mt-danger)]">{fmt(totalSpent)}</div>
-                </div>
-                <div className={summaryCardClass}>
-                  <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Net</div>
-                  <div className="text-[15px] text-[color:var(--mt-danger)]">{fmt(totalIncome - totalSpent)}</div>
-                </div>
-                <div className={summaryCardClass}>
-                  <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>All assets</div>
-                  <div className="text-[15px] text-[color:var(--mt-accent)]">{fmt(totalAccountBalance)}</div>
-                </div>
+              <div className="mb-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
+                {(() => {
+                  const incomeDelta = pctChange(totalIncome, prevMonthIncome);
+                  const spentDelta = pctChange(totalSpent, prevMonthSpent);
+                  const netDelta = pctChange(totalNet, prevMonthNet);
+                  const assetsDelta = pctChange(totalAccountBalance, totalAccountBalancePrevMonthEnd);
+
+                  const trend = (d: number | null) => {
+                    if (d == null || !Number.isFinite(d)) return "—";
+                    const up = d >= 0;
+                    return `${up ? "↑" : "↓"} ${fmtPct(d)} vs last month`;
+                  };
+
+                  const statCardBase =
+                    `relative overflow-hidden rounded-2xl border ${frameBorder} bg-[var(--mt-card)] p-4 shadow-[0_10px_30px_rgba(0,0,0,0.22)]`;
+
+                  return (
+                    <>
+                      <div className={statCardBase}>
+                        <div className="text-[12px] font-semibold uppercase tracking-[0.55px] text-white/70">Income</div>
+                        <div className="mt-2 text-[20px] font-medium text-[color:var(--mt-text)]">{fmt(totalIncome)}</div>
+                        <div className="mt-2 text-[12px] text-white/50">{trend(incomeDelta)}</div>
+                      </div>
+
+                      <div className={statCardBase}>
+                        <div className="text-[12px] font-semibold uppercase tracking-[0.55px] text-white/70">Spent</div>
+                        <div className="mt-2 text-[20px] font-medium text-[color:var(--mt-danger)]">{fmt(totalSpent)}</div>
+                        <div className="mt-2 text-[12px] text-white/50">{trend(spentDelta)}</div>
+                      </div>
+
+                      <div className={statCardBase}>
+                        <div className="text-[12px] font-semibold uppercase tracking-[0.55px] text-white/70">Net this month</div>
+                        <div className="mt-2 text-[20px] font-medium text-[color:var(--mt-danger)]">{fmt(totalNet)}</div>
+                        <div className="mt-2 text-[12px] text-white/50">{trend(netDelta)}</div>
+                      </div>
+
+                      <div className={statCardBase}>
+                        <div className="text-[12px] font-semibold uppercase tracking-[0.55px] text-white/70">All assets</div>
+                        <div className="mt-2 text-[20px] font-medium text-[color:var(--mt-accent)]">{fmt(totalAccountBalance)}</div>
+                        <div className="mt-2 text-[12px] text-white/50">{trend(assetsDelta)}</div>
+                      </div>
+                    </>
+                  );
+                })()}
               </div>
 
-              <div className="grid gap-[10px] lg:grid-cols-[1fr_1.15fr_0.85fr]">
-                <div className="flex flex-col gap-[10px]">
+              <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(280px,400px)]">
+                <div className="flex min-w-0 flex-col gap-5">
+                  <div className={panelClass}>
+                    <div className={dashPanelHeaderClass}>
+                      <span>Budget by Category</span>
+                      <button
+                        type="button"
+                        onClick={openCategory}
+                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
+                      >
+                        + Category
+                      </button>
+                    </div>
+                    <div className="flex flex-col gap-7 px-3 py-2 pr-4">
+                      {budgetCards.map((b) => {
+                        const rem = b.budget - b.spent;
+                        const overBudget = b.budget > 0 && b.spent > b.budget;
+                        const hoverText = b.budget <= 0 ? "—" : overBudget ? `-${fmt(Math.abs(rem))} over` : `${fmt(rem)} left`;
+                        const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+                        const dailyBudget = b.budget > 0 ? Math.max(rem, 0) / Math.max(daysInMonth, 1) : 0;
+                        const pctFull = b.budget > 0 ? b.spent / b.budget : 0;
+                        const pctBar = overBudget ? 1 : Math.min(pctFull, 1);
+                        const fillColor = resolveExpenseCategoryDisplayColor(b.category);
+                        const spentColor =
+                          b.spent === 0
+                            ? "text-[color:var(--mt-accent)]"
+                            : overBudget
+                              ? "text-[#ff5555]"
+                              : "text-[color:var(--mt-text)]";
+                        const barFill = overBudget ? "#ff5555" : fillColor;
+                        return (
+                          <div
+                            key={b.category.id}
+                            className="flex flex-col gap-2.5 sm:grid sm:grid-cols-[minmax(150px,200px)_minmax(0,1fr)_auto] sm:items-center sm:gap-1.5"
+                          >
+                            <div className="flex w-full min-w-0 max-w-[200px] items-center gap-2">
+                              <span
+                                className="h-2 w-2 shrink-0 rounded-full"
+                                style={{ backgroundColor: overBudget ? "#ff5555" : fillColor }}
+                              />
+                              <span className={`truncate text-xs font-medium uppercase tracking-[0.5px] ${overBudget ? "text-[#ff5555]" : itemNameColor}`}>
+                                {b.category.name}
+                              </span>
+                              {b.budget > 0 ? <span className={`shrink-0 text-[11px] ${headingColor}`}>{`≈ ฿${Math.round(dailyBudget)}/day`}</span> : null}
+                            </div>
+                            <div className="w-full min-w-0 sm:pr-4">
+                              <div className="flex items-center gap-2">
+                                <div className="relative w-full min-w-0 max-w-[520px] flex-1">
+                                  <div
+                                    className="h-1.5 w-full overflow-hidden rounded-full bg-white/10"
+                                  onPointerMove={(e) => {
+                                    const x = Math.min(window.innerWidth - 16, e.clientX + 12);
+                                    const y = Math.min(window.innerHeight - 16, e.clientY + 12);
+                                    setHoveredBudgetByCategoryBar({ text: hoverText, color: overBudget ? "#ff5555" : "var(--mt-text)", x, y });
+                                  }}
+                                  onPointerLeave={() => setHoveredBudgetByCategoryBar(null)}
+                                  onPointerCancel={() => setHoveredBudgetByCategoryBar(null)}
+                                >
+                                  <div
+                                    className="h-full rounded-full"
+                                    style={{
+                                      width: `${(pctBar * 100).toFixed(2)}%`,
+                                      backgroundColor: barFill,
+                                    }}
+                                  />
+                                </div>
+                                  <div
+                                    className={`pointer-events-none absolute -top-4 text-[11px] font-medium ${headingColor}`}
+                                    style={{
+                                      left: `${Math.min(100, Math.max(0, pctFull * 100))}%`,
+                                      transform: "translateX(-50%)",
+                                    }}
+                                  >
+                                    {`${Math.round(pctFull * 100)}%`}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                            <div className="min-w-[96px] pr-1 text-right">
+                              <div className={`text-sm font-semibold tabular-nums leading-tight ${spentColor}`}>
+                                {b.spent === 0 ? "—" : fmt(b.spent)}
+                              </div>
+                              <div className={`mt-0.5 text-[12px] font-medium tabular-nums leading-tight ${headingColor}`}>
+                                {b.budget > 0 ? `/${fmt(b.budget)}` : "—"}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   <div className={panelClass}>
                     <div className={dashPanelHeaderClass}>
                       <span>Accounts</span>
@@ -4386,20 +4910,11 @@ export default function Home() {
                       </button>
                     </div>
                     <div className="px-2.5 py-2">
-                      <div className="grid grid-cols-2 gap-[10px]">
+                      <div className="grid grid-cols-2 gap-3">
                         {orderedAccounts.map((a) => {
                           const lastDate = lastChangeDateByAccountId.get(a.id);
-                          const bg = (a as any).color ? ((a as any).color as string) : "var(--mt-card)";
-                          const border = "#444747";
                           return (
-                            <div
-                              key={a.id}
-                          className={`rounded border px-2.5 py-2`}
-                          style={{
-                            backgroundColor: bg,
-                            borderColor: border,
-                          }}
-                            >
+                            <div key={a.id} className={`rounded border ${frameBorder} bg-[var(--mt-card)] px-2.5 py-2`}>
                               <div className={`text-xs uppercase tracking-[0.5px] ${itemNameColor}`}>{a.name}</div>
                               <div className="mt-1 text-[15px] text-white">
                                 {fmt(balanceByAccountId.get(a.id) ?? a.opening_balance)}
@@ -4423,7 +4938,10 @@ export default function Home() {
                       type="button"
                       onClick={() => {
                         setAuthError(null);
-                        setGoalAddDraft({ name: "", goal_amount: "", balance_amount: "", color: "#103544" });
+                        setGoalAddDraft({ name: "", goal_amount: "", balance_amount: "", goal_date: "", color: "#103544" });
+                        setGoalAddCalendarOpen(false);
+                        setGoalAddCalMonth(new Date().getMonth());
+                        setGoalAddCalYear(new Date().getFullYear());
                         setGoalOpen(true);
                       }}
                       className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-white`}
@@ -4431,53 +4949,105 @@ export default function Home() {
                       + Goal
                     </button>
                   </div>
-                    <div className="p-2.5">
-                      <div className="space-y-2">
-                        {goals.map((g) => {
-                          const goalValue = (() => {
-                            const n = Number.parseFloat((g.goal_amount || "").replace(/[฿,]/g, ""));
-                            return Number.isFinite(n) && n > 0 ? n : 0;
-                          })();
-                          const balanceValue = (() => {
-                            const n = Number.parseFloat((g.balance_amount || "").replace(/[฿,]/g, ""));
-                            return Number.isFinite(n) ? n : 0;
-                          })();
-                          const pct = goalValue > 0 ? Math.max(0, Math.min(1, balanceValue / goalValue)) : 0;
-                          const remaining = Math.max(0, goalValue - balanceValue);
+                    <div className={`divide-y divide-[color:var(--mt-border)]`}>
+                      {goals.map((g) => {
+                        const goalValue = (() => {
+                          const n = Number.parseFloat((g.goal_amount || "").replace(/[฿,]/g, ""));
+                          return Number.isFinite(n) && n > 0 ? n : 0;
+                        })();
+                        const balanceValue = (() => {
+                          const n = Number.parseFloat((g.balance_amount || "").replace(/[฿,]/g, ""));
+                          return Number.isFinite(n) ? n : 0;
+                        })();
+                        const pct = goalValue > 0 ? Math.max(0, Math.min(1, balanceValue / goalValue)) : 0;
+                        const remaining = Math.max(0, goalValue - balanceValue);
 
-                          return (
-                            <div key={g.id} className={`rounded border ${frameBorder} bg-[var(--mt-card)] px-3 py-2`}>
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-start gap-2">
-                                    <button
-                                      type="button"
-                                      onClick={() => openGoalEdit(g)}
-                                      className={`truncate text-left text-sm font-semibold ${itemNameColor} hover:text-white`}
-                                      title="Click to edit"
-                                    >
-                                      {g.name}
-                                    </button>
-                                  </div>
-                                  <div className="mt-0.5 whitespace-nowrap text-[13px] font-semibold" style={{ color: (g as any).color || "#00CCCC" }}>
-                                    {fmt(balanceValue)}
-                                    <span className={`ml-1 text-[11px] font-medium ${headingColor}`}>{`/ ${fmt(goalValue)}`}</span>
-                                  </div>
+                        return (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => openGoalEdit(g)}
+                            className="w-full px-3 py-3 text-left hover:bg-[var(--mt-hover)]"
+                            title="Click to edit"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="min-w-0">
+                                <div className={`truncate text-sm font-semibold ${itemNameColor} hover:text-[color:var(--mt-text)]`}>{g.name}</div>
+                                <div className="mt-0.5 whitespace-nowrap text-[13px] font-semibold" style={{ color: (g as any).color || "#00CCCC" }}>
+                                  {fmt(balanceValue)}
+                                  <span className={`ml-1 text-[11px] font-medium ${headingColor}`}>{`/ ${fmt(goalValue)}`}</span>
                                 </div>
                               </div>
-
-                              <div className="mt-1 h-1.5 rounded bg-white/10">
+                            </div>
+                            <div className="mt-2 flex items-center justify-between gap-3">
+                              <div className="h-1.5 flex-1 rounded bg-white/10">
                                 <div className="h-full rounded" style={{ width: `${(pct * 100).toFixed(1)}%`, backgroundColor: (g as any).color || "#00CCCC" }} />
                               </div>
-
-                              <div className={`mt-1.5 flex justify-between text-xs ${headingColor}`}>
-                                <span>{`${Math.round(pct * 100)}%`}</span>
-                                <span>{`${fmt(remaining)} remaining`}</span>
-                              </div>
+                              <div className="shrink-0 text-right text-sm font-bold tabular-nums text-[color:var(--mt-danger)]">{fmt(remaining)}</div>
                             </div>
-                          );
-                        })}
-                      </div>
+                            <div className="mt-1.5 flex items-start justify-end gap-3">
+                              {(() => {
+                                const raw = (g as any).goal_date ? String((g as any).goal_date) : "";
+                                if (!raw) return null;
+                                const end = new Date(`${raw}T00:00:00`);
+                                if (Number.isNaN(end.getTime())) return null;
+                                const now = new Date();
+                                const months = (end.getFullYear() - now.getFullYear()) * 12 + (end.getMonth() - now.getMonth());
+                                const denom = Math.max(1, months + 1);
+                                const perMonth = Math.max(0, remaining) / denom;
+                                return <div className={`shrink-0 text-right text-xs ${headingColor}`}>{`≈ Monthly ${fmt(perMonth)}`}</div>;
+                              })()}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex min-w-0 flex-col gap-5">
+                  <div className={panelClass}>
+                    <div className={dashPanelHeaderClass}>
+                      <span>Budget remaining</span>
+                    </div>
+                    <BudgetRemainingDonutChart segments={budgetRemainingSegments} total={budgetRemainingTotal} />
+                  </div>
+                  <div className={panelClass}>
+                    <div className={dashPanelHeaderClass}>Recent Expense</div>
+                    <div className={`divide-y divide-[color:var(--mt-border)]`}>
+                      {recentExpenseCards.map((t) => {
+                        const cat = categories.find((c) => c.id === t.category_id) ?? null;
+                        const catName = cat?.name ?? "—";
+                        const dotColor = resolveExpenseCategoryDisplayColor(cat ?? { name: catName, color: "#6b7280" });
+                        return (
+                          <button
+                            key={t.id}
+                            type="button"
+                            onClick={() => openEditExpense(t)}
+                            className="group flex w-full items-center justify-between gap-3 px-3 py-3 text-left hover:bg-[var(--mt-hover)]"
+                          >
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-2">
+                                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: dotColor }} />
+                                <div className={`min-w-0 truncate text-sm ${itemNameColor} group-hover:text-[color:var(--mt-text)]`}>{t.name}</div>
+                              </div>
+                              <div className={`mt-0.5 truncate pl-4 text-[11px] ${headingColor}`}>{catName}</div>
+                            </div>
+
+                            <div className="shrink-0 text-right">
+                              <div className="text-sm font-semibold text-[color:var(--mt-danger)]">-{fmt(t.amount)}</div>
+                              <div className={`mt-0.5 text-[11px] ${headingColor}`}>{formatLongDate(t.date)}</div>
+                            </div>
+                          </button>
+                        );
+                      })}
+                      <button
+                        type="button"
+                        onClick={() => setActivePage("expenses")}
+                        className={`w-full px-3 py-2 text-right text-[11px] font-medium ${headingColor} hover:bg-[var(--mt-hover)] hover:text-[color:var(--mt-text)]`}
+                      >
+                        View all expenses →
+                      </button>
                     </div>
                   </div>
 
@@ -4485,7 +5055,10 @@ export default function Home() {
                     <div className={dashPanelHeaderClass}>
                       <span>Bills</span>
                       <div className="flex items-center gap-2">
-                        <div className={`text-[11px] font-semibold ${headingColor}`}>{`${paidCount}/${billsMonthly.length}`}</div>
+                        <span className="rounded-full bg-[color:var(--mt-danger)]/10 px-2 py-0.5 text-[11px] font-semibold text-[color:var(--mt-danger)]">
+                          {unpaidCount} unpaid
+                        </span>
+                        <span className="rounded-full bg-white/10 px-2 py-0.5 text-[11px] font-semibold text-white/70">{paidCount} paid</span>
                         <button
                           type="button"
                           onClick={openBill}
@@ -4495,19 +5068,13 @@ export default function Home() {
                         </button>
                       </div>
                     </div>
-                    <div className="grid gap-[10px] px-2.5 py-2">
-                      {billsMonthly.map((bill, i) => (
-                        <div
-                          key={`${bill.id}-${i}`}
-                          className={`rounded border px-2.5 py-2`}
-                          style={{
-                            backgroundColor: "var(--mt-card)",
-                            borderColor: "var(--mt-border)",
-                          }}
-                        >
-                          <div className="flex items-start justify-between gap-3">
+                    <div className={`divide-y divide-[color:var(--mt-border)]`}>
+                      {(dashBillsShowAll ? billsMonthly : billsMonthly.filter((b) => !b.paid)).map((bill) => {
+                        const billIdx = billsMonthly.findIndex((x) => x.id === bill.id);
+                        return (
+                          <div key={bill.id} className={`flex items-start justify-between gap-3 px-3 py-3 ${bill.paid ? "opacity-50" : ""}`}>
                             <div className="min-w-0">
-                              <div className={`truncate text-sm ${itemNameColor}`}>
+                              <div className={`truncate ${bill.paid ? "text-[13px]" : "text-sm"} ${itemNameColor}`}>
                                 {bill.name} • {fmt(bill.amount)}
                               </div>
                               <div className={`mt-0.5 text-xs ${headingColor}`}>Due {bill.due_date ? formatLongDate(bill.due_date) : "—"}</div>
@@ -4520,7 +5087,8 @@ export default function Home() {
                             </div>
                             <div className="shrink-0 text-right">
                               <button
-                                onClick={() => requestToggleBillPaid(i)}
+                                type="button"
+                                onClick={() => requestToggleBillPaid(billIdx)}
                                 className={`mt-1 rounded px-2 py-0.5 text-xs ${
                                   bill.paid
                                     ? "bg-[color:var(--mt-accent)]/10 text-[color:var(--mt-accent)]"
@@ -4531,97 +5099,20 @@ export default function Home() {
                               </button>
                             </div>
                           </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex flex-col gap-[10px]">
-                  <div className={panelClass}>
-                    <div className={dashPanelHeaderClass}>
-                      <span>Budget by Category</span>
-                      <button
-                        type="button"
-                        onClick={openCategory}
-                        className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-[11px] font-medium ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
-                      >
-                        + Category
-                      </button>
-                    </div>
-                    <div className="grid gap-[10px] px-2.5 py-2">
-                      {budgetCards.map((b) => {
-                        const rem = b.budget - b.spent;
-                        const pct = b.budget > 0 ? Math.min(b.spent / b.budget, 1) : 0;
-                        const fillColor = resolveExpenseCategoryDisplayColor(b.category);
-                        return (
-                          <div
-                            key={b.category.id}
-                            className={`rounded border ${frameBorder} bg-[var(--mt-card)] px-2.5 py-2`}
-                            style={undefined}
-                          >
-                            <div className="flex items-baseline justify-between">
-                              <div className={`flex items-center gap-1.5 text-xs uppercase tracking-[0.5px] ${itemNameColor}`}>
-                                <CategoryIcon name={b.category.name} />
-                                <span>{b.category.name}</span>
-                              </div>
-                              <div className={`text-sm ${b.spent === 0 ? "text-[color:var(--mt-accent)]" : "text-[color:var(--mt-danger)]"}`}>{b.spent === 0 ? "—" : fmt(b.spent)}</div>
-                            </div>
-                            <div className={`mt-1 flex justify-between text-xs ${headingColor}`}>
-                              <span>Budget {b.budget === 0 ? "—" : fmt(b.budget)}</span>
-                              <span>
-                                Remaining <span className="text-[color:var(--mt-text)]">{fmt(rem)}</span>
-                              </span>
-                            </div>
-                            <div className="mt-2 h-2 rounded bg-white/10">
-                              <div className="h-full rounded" style={{ width: `${(pct * 100).toFixed(1)}%`, backgroundColor: fillColor }} />
-                            </div>
-                            <div className={`mt-1 flex justify-between text-xs ${headingColor}`}>
-                              <span>{`${(pct * 100).toFixed(0)}% used`}</span>
-                              <span>{`≈ ฿${Math.round(rem / DAYS_LEFT_FALLBACK)}/day`}</span>
-                            </div>
-                          </div>
                         );
                       })}
+                      {paidCount > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setDashBillsShowAll((v) => !v)}
+                          className={`w-full px-3 py-2 text-left text-[11px] font-medium ${headingColor} hover:bg-[var(--mt-hover)] hover:text-[color:var(--mt-text)]`}
+                        >
+                          {dashBillsShowAll ? "Show unpaid only" : `Show all bills (${billsMonthly.length})`}
+                        </button>
+                      ) : null}
                     </div>
                   </div>
-                </div>
 
-                <div className="flex flex-col gap-[10px]">
-                  <div className={panelClass}>
-                    <div className={dashPanelHeaderClass}>
-                      <span>Budget remaining</span>
-                    </div>
-                    <BudgetRemainingDonutChart segments={budgetRemainingSegments} total={budgetRemainingTotal} />
-                  </div>
-                  <div className={panelClass}>
-                    <div className={dashPanelHeaderClass}>Recent Expense</div>
-                    <div className="grid gap-[10px] px-2.5 py-2">
-                      {recentExpenseCards.map((t) => {
-                        const catName = categories.find((c) => c.id === t.category_id)?.name ?? "—";
-                        const accName = accounts.find((a) => a.id === t.account_id)?.name ?? "—";
-                        return (
-                          <div key={t.id} className={`rounded border ${frameBorder} bg-[var(--mt-card)] px-2.5 py-2 text-sm`}>
-                            <div className="mb-0.5 flex justify-between gap-3">
-                              <button
-                                type="button"
-                                onClick={() => openEditExpense(t)}
-                                className={`min-w-0 truncate text-left ${itemNameColor} hover:text-[color:var(--mt-text)]`}
-                              >
-                                {t.name}
-                              </button>
-                              <span className="shrink-0 text-[color:var(--mt-danger)]">-{fmt(t.amount)}</span>
-                            </div>
-                            <div className={`flex justify-between text-xs ${headingColor}`}>
-                              <CategoryBadge category={catName} />
-                              <span>{formatLongDate(t.date)}</span>
-                            </div>
-                            <div className={`mt-0.5 text-[11px] ${headingColor}`}>{accName}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
                   <div className={panelClass}>
                     <div className={dashPanelHeaderClass}>Income</div>
                     <div className="px-2.5 py-2">
@@ -4701,19 +5192,19 @@ export default function Home() {
           )}
 
           {activePage === "accounts" && (
-            <div className="flex flex-col gap-[10px]">
-              <div className="grid gap-[10px] sm:grid-cols-3">
+            <div className="flex flex-col gap-5">
+              <div className="grid gap-5 sm:grid-cols-3">
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Total income (all time)</div>
-                  <div className="text-[15px] text-[color:var(--mt-text)]">{fmt(0)}</div>
+                  <div className="text-[20px] font-medium text-[color:var(--mt-text)]">{fmt(0)}</div>
                 </div>
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Total expenses (all time)</div>
-                  <div className="text-[15px] text-[color:var(--mt-danger)]">{fmt(totalSpent)}</div>
+                  <div className="text-[20px] font-medium text-[color:var(--mt-danger)]">{fmt(totalSpent)}</div>
                 </div>
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Net balance</div>
-                  <div className="text-[15px] text-[color:var(--mt-accent)]">{fmt(totalAccountBalance)}</div>
+                  <div className="text-[20px] font-medium text-[color:var(--mt-accent)]">{fmt(totalAccountBalance)}</div>
                 </div>
               </div>
 
@@ -4815,21 +5306,21 @@ export default function Home() {
           )}
 
           {activePage === "bills" && (
-            <div className="flex flex-col gap-[10px]">
-              <div className="grid gap-[10px] sm:grid-cols-3">
+            <div className="flex flex-col gap-5">
+              <div className="grid gap-5 sm:grid-cols-3">
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Monthly total</div>
-                  <div className="text-[15px] text-[#00CCCC]">{fmt(billsTotal)}</div>
+                  <div className="text-[20px] font-medium text-[#00CCCC]">{fmt(billsTotal)}</div>
                 </div>
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Paid</div>
-                  <div className="text-[15px] text-[#00CCCC]">
+                  <div className="text-[20px] font-medium text-[#00CCCC]">
                     {paidCount} item{paidCount !== 1 ? "s" : ""}
                   </div>
                 </div>
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Unpaid</div>
-                  <div className="text-[15px] text-[#ff5555]">
+                  <div className="text-[20px] font-medium text-[#ff5555]">
                     {unpaidCount} item{unpaidCount !== 1 ? "s" : ""}
                   </div>
                 </div>
@@ -4894,7 +5385,7 @@ export default function Home() {
           )}
 
           {activePage === "categories" && (
-            <div className="flex flex-col gap-[10px]">
+            <div className="flex flex-col gap-5">
             <div className={panelClass}>
               <div className={panelHeaderClass}>Budget by Category</div>
               <div className="overflow-x-auto">
@@ -5126,20 +5617,20 @@ export default function Home() {
           )}
 
           {activePage === "expenses" && (
-            <div className="flex flex-col gap-[10px]">
-              <div className="grid gap-[10px] sm:grid-cols-3">
+            <div className="flex flex-col gap-5">
+              <div className="grid gap-5 sm:grid-cols-3">
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Total expense (this month)</div>
-                  <div className="text-[15px] text-[color:var(--mt-danger)]">{fmt(monthSpent)}</div>
+                  <div className="text-[20px] font-medium text-[color:var(--mt-danger)]">{fmt(monthSpent)}</div>
                 </div>
               </div>
-              <div className="grid items-start gap-[10px] lg:grid-cols-[minmax(0,1fr)_minmax(260px,300px)]">
+              <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(260px,300px)]">
                 <div className={panelClass}>
                   <div className={panelHeaderClass}>Expenses</div>
                   <div className="overflow-x-auto">
                     <table className="w-full max-w-full border-collapse text-sm">
-                      <thead>
-                        <tr className={tableHeadRowClass}>
+                      <thead className="sticky top-0 z-10">
+                        <tr className={`${tableHeadRowClass} border-b ${frameBorder}`}>
                           <th className="px-2 py-2 text-left font-normal">Name</th>
                           <th className="px-2 py-2 text-right font-normal">Amount</th>
                           <th className="px-2 py-2 text-right font-normal">Date</th>
@@ -5152,25 +5643,30 @@ export default function Home() {
                           .filter((t) => t.type === "expense")
                           .slice()
                           .sort((a, b) => b.date.localeCompare(a.date))
-                          .map((t) => {
+                          .map((t, idx) => {
                             const acc = accounts.find((a) => a.id === t.account_id)?.name ?? "—";
                             const cat = categories.find((c) => c.id === t.category_id)?.name ?? "—";
                             return (
-                              <tr key={t.id} className={`border-b ${frameBorder} last:border-0`}>
-                                <td className={`max-w-[140px] truncate px-2 py-1.5 ${itemNameColor}`}>
+                              <tr
+                                key={t.id}
+                                className={`border-b ${frameBorder} last:border-0 hover:bg-[var(--mt-hover)] ${idx % 2 === 1 ? "bg-[var(--mt-hover-soft)]" : ""}`}
+                              >
+                                <td className={`max-w-[140px] truncate px-2 py-3 align-middle ${itemNameColor}`}>
                                   <button onClick={() => openEditExpense(t)} className="text-left hover:text-[color:var(--mt-text)]">
                                     {t.name}
                                   </button>
                                   {t.note?.trim() ? <div className={`mt-0.5 truncate text-[11px] ${headingColor}`}>{t.note}</div> : null}
                                 </td>
-                                <td className="whitespace-nowrap px-2 py-1.5 text-right text-[color:var(--mt-danger)]">{fmt(t.amount)}</td>
-                                <td className={`whitespace-nowrap px-2 py-1.5 text-right ${itemNameColor}`}>{formatLongDate(t.date)}</td>
-                                <td className={`hidden px-2 py-1.5 text-right sm:table-cell`}>
+                                <td className="whitespace-nowrap px-2 py-3 align-middle text-right font-semibold text-[color:var(--mt-danger)]">
+                                  {fmt(t.amount)}
+                                </td>
+                                <td className={`whitespace-nowrap px-2 py-3 align-middle text-right ${itemNameColor}`}>{formatLongDate(t.date)}</td>
+                                <td className={`hidden px-2 py-3 align-middle text-right sm:table-cell`}>
                                   <span className="flex justify-end">
                                     <CategoryBadge category={cat} />
                                   </span>
                                 </td>
-                                <td className={`hidden px-2 py-1.5 text-right md:table-cell ${itemNameColor}`}>{acc}</td>
+                                <td className={`hidden px-2 py-3 align-middle text-right md:table-cell ${itemNameColor}`}>{acc}</td>
                               </tr>
                             );
                           })}
@@ -5188,11 +5684,11 @@ export default function Home() {
           )}
 
           {activePage === "income" && (
-            <div className="flex flex-col gap-[10px]">
-              <div className="grid gap-[10px] sm:grid-cols-3">
+            <div className="flex flex-col gap-5">
+              <div className="grid gap-5 sm:grid-cols-3">
                 <div className={summaryCardClass}>
                   <div className={`mb-1 text-xs uppercase tracking-[0.5px] ${headingColor}`}>Total income (this month)</div>
-                  <div className="text-[15px] text-[#00CCCC]">{fmt(monthIncome)}</div>
+                  <div className="text-[20px] font-medium text-[#00CCCC]">{fmt(monthIncome)}</div>
                 </div>
               </div>
 
@@ -5265,6 +5761,19 @@ export default function Home() {
               </div>
               <div className="mt-1 text-sm font-semibold text-white">{fmt(hoveredBudgetRemainingDonut.amount)}</div>
               <div className={`mt-0.5 text-[11px] ${headingColor}`}>{`Budget ${fmt(hoveredBudgetRemainingDonut.budget)}`}</div>
+            </div>
+          )}
+
+          {hoveredBudgetByCategoryBar && (
+            <div
+              className={`pointer-events-none fixed z-50 w-fit max-w-[280px] rounded border ${frameBorder} bg-black px-3 py-2 text-sm shadow-[0_10px_30px_rgba(0,0,0,0.55)]`}
+              style={{ left: hoveredBudgetByCategoryBar.x, top: hoveredBudgetByCategoryBar.y }}
+            >
+              <div className="flex items-center gap-2">
+                <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: hoveredBudgetByCategoryBar.color }} />
+                <div className={`text-[11px] uppercase tracking-[0.5px] ${headingColor}`}>Remaining</div>
+              </div>
+              <div className="mt-1 font-semibold text-white">{hoveredBudgetByCategoryBar.text}</div>
             </div>
           )}
         </section>

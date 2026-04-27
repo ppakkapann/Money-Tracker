@@ -10,10 +10,11 @@
   --foreground: #ededed;
 
   /* App tokens (Ocean default) */
-  --mt-bg: #050b12;
-  --mt-panel: #050b12;
-  --mt-card: #0e1c2b; /* slightly lighter than bg */
-  --mt-border: #243246;
+  --mt-bg: radial-gradient(1200px 700px at 50% -100px, rgba(79, 209, 255, 0.14), rgba(5, 11, 18, 0) 55%),
+    linear-gradient(180deg, #050b12 0%, #050a11 40%, #040910 100%);
+  --mt-panel: rgba(10, 20, 32, 0.82); /* main surfaces + sidebar */
+  --mt-card: rgba(14, 28, 43, 0.88); /* slightly lifted vs panel */
+  --mt-border: rgba(255, 255, 255, 0.08);
   --mt-heading: #9fb0c5;
   --mt-muted: #6e7f96;
   --mt-text: #eaf2ff;
@@ -27,10 +28,11 @@
 }
 
 html[data-theme="ocean"] {
-  --mt-bg: #050b12;
-  --mt-panel: #050b12;
-  --mt-card: #0e1c2b;
-  --mt-border: #243246;
+  --mt-bg: radial-gradient(1200px 700px at 50% -100px, rgba(79, 209, 255, 0.14), rgba(5, 11, 18, 0) 55%),
+    linear-gradient(180deg, #050b12 0%, #050a11 40%, #040910 100%);
+  --mt-panel: rgba(10, 20, 32, 0.82);
+  --mt-card: rgba(14, 28, 43, 0.88);
+  --mt-border: rgba(255, 255, 255, 0.08);
   --mt-heading: #9fb0c5;
   --mt-muted: #6e7f96;
   --mt-text: #eaf2ff;
