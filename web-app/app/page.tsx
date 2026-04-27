@@ -4976,7 +4976,7 @@ export default function Home() {
                             className="w-full px-3 py-3 text-left hover:bg-[var(--mt-hover)]"
                             title="Click to edit"
                           >
-                            <div className="flex items-start justify-between gap-3">
+                            <div className="flex w-full items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <div className={`truncate text-sm font-semibold ${itemNameColor} hover:text-[color:var(--mt-text)]`}>{g.name}</div>
                                 <div className="mt-0.5 whitespace-nowrap text-[13px] font-semibold" style={{ color: (g as any).color || "#00CCCC" }}>
@@ -4984,12 +4984,15 @@ export default function Home() {
                                   <span className={`ml-1 text-[11px] font-medium ${headingColor}`}>{`/ ${fmt(goalValue)}`}</span>
                                 </div>
                               </div>
+                              <div className="shrink-0 text-right">
+                                <div className="text-sm font-semibold opacity-0">.</div>
+                                <div className="mt-0.5 text-sm font-bold tabular-nums text-[color:var(--mt-danger)]">{fmt(remaining)}</div>
+                              </div>
                             </div>
                             <div className="mt-2 flex items-center justify-between gap-3">
                               <div className="h-1.5 flex-1 rounded bg-white/10">
                                 <div className="h-full rounded" style={{ width: `${(pct * 100).toFixed(1)}%`, backgroundColor: (g as any).color || "#00CCCC" }} />
                               </div>
-                              <div className="shrink-0 text-right text-sm font-bold tabular-nums text-[color:var(--mt-danger)]">{fmt(remaining)}</div>
                             </div>
                             <div className="mt-1.5 flex items-start justify-end gap-3">
                               {(() => {
