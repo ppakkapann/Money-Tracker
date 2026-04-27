@@ -51,6 +51,7 @@ type TransactionRow = {
   id: string;
   type: "expense" | "income" | "transfer";
   date: string; // yyyy-mm-dd
+  created_at?: string | null; // timestamptz
   amount: number;
   name: string;
   note: string | null;
@@ -1972,7 +1973,10 @@ export default function Home() {
             .eq("archived", false)
             .order("kind")
             .order("name"),
-          supabase.from("transactions").select("*").eq("user_id", session.user.id),
+          supabase
+            .from("transactions")
+            .select("id,type,date,created_at,amount,name,note,account_id,category_id,from_account_id,to_account_id")
+            .eq("user_id", session.user.id),
         ]);
 
         if (acctRes.error) throw acctRes.error;
@@ -2068,6 +2072,8 @@ export default function Home() {
     [transactions, monthEndIso, monthStart],
   );
 
+  const txSortKey = (t: TransactionRow) => (t.created_at && t.created_at.trim() ? t.created_at : `${t.date}T00:00:00Z`);
+
   const recentExpenseCards = useMemo(() => {
     const cutoff = new Date();
     cutoff.setHours(0, 0, 0, 0);
@@ -2075,7 +2081,7 @@ export default function Home() {
     const cutoffIso = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
     return txInMonth
       .filter((t) => t.type === "expense" && t.date >= cutoffIso)
-      .sort((a, b) => b.date.localeCompare(a.date))
+      .sort((a, b) => txSortKey(b).localeCompare(txSortKey(a)))
       .slice(0, 8);
   }, [txInMonth]);
 
@@ -4851,9 +4857,9 @@ export default function Home() {
                               </span>
                               {b.budget > 0 ? <span className={`shrink-0 text-[11px] ${headingColor}`}>{`≈ ฿${Math.round(dailyBudget)}/day`}</span> : null}
                             </div>
-                            <div className="w-full min-w-0 sm:pr-4">
+                            <div className="w-full min-w-0 sm:pr-4 lg:pr-6">
                               <div className="flex items-center gap-2">
-                                <div className="relative w-full min-w-0 max-w-[520px] flex-1">
+                                <div className="relative w-full min-w-0 max-w-[520px] flex-1 sm:max-w-[600px] lg:max-w-[760px] xl:max-w-[880px]">
                                   <div
                                     className="h-1.5 w-full overflow-hidden rounded-full bg-white/10"
                                   onPointerMove={(e) => {
@@ -5642,7 +5648,7 @@ export default function Home() {
                         {txInMonth
                           .filter((t) => t.type === "expense")
                           .slice()
-                          .sort((a, b) => b.date.localeCompare(a.date))
+                          .sort((a, b) => txSortKey(b).localeCompare(txSortKey(a)))
                           .map((t, idx) => {
                             const acc = accounts.find((a) => a.id === t.account_id)?.name ?? "—";
                             const cat = categories.find((c) => c.id === t.category_id)?.name ?? "—";
