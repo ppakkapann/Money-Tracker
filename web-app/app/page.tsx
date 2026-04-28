@@ -4873,7 +4873,10 @@ export default function Home() {
                         const overBudget = b.budget > 0 && b.spent > b.budget;
                         const hoverText = b.budget <= 0 ? "—" : overBudget ? `-${fmt(Math.abs(rem))} over` : `${fmt(rem)} left`;
                         const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
-                        const dailyBudget = b.budget > 0 ? Math.max(rem, 0) / Math.max(daysInMonth, 1) : 0;
+                        const today = new Date();
+                        const isCurrentMonth = today.getFullYear() === year && today.getMonth() === monthIndex;
+                        const daysLeftInMonth = isCurrentMonth ? Math.max(1, daysInMonth - today.getDate() + 1) : Math.max(daysInMonth, 1);
+                        const dailyBudget = b.budget > 0 ? Math.max(rem, 0) / daysLeftInMonth : 0;
                         const pctFull = b.budget > 0 ? b.spent / b.budget : 0;
                         const pctBar = overBudget ? 1 : Math.min(pctFull, 1);
                         const fillColor = resolveExpenseCategoryDisplayColor(b.category);
@@ -5582,8 +5585,11 @@ export default function Home() {
                         {(() => {
                           const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
                           const remSafe = Math.max(remaining, 0);
-                          const daily = daysInMonth > 0 ? remSafe / daysInMonth : 0;
-                          const weekly = daysInMonth > 0 ? (remSafe * 7) / daysInMonth : 0;
+                          const today = new Date();
+                          const isCurrentMonth = today.getFullYear() === year && today.getMonth() === monthIndex;
+                          const denomDays = isCurrentMonth ? Math.max(1, daysInMonth - today.getDate() + 1) : Math.max(daysInMonth, 1);
+                          const daily = denomDays > 0 ? remSafe / denomDays : 0;
+                          const weekly = denomDays > 0 ? (remSafe * 7) / denomDays : 0;
                           return (
                             <>
                               <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>{`฿${Math.round(daily)}`}</td>
