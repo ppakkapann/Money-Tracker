@@ -141,6 +141,34 @@ function resolveExpenseCategoryDisplayColor(category: Pick<CategoryRow, "name" |
   return (EXPENSE_CATEGORY_COLORS as Record<string, string>)[category.name] ?? category.color;
 }
 
+/** Dashboard account accents: Pink (expense-like), Mint (income-like), Purple, Sky, Orange, or None. */
+const ACCOUNT_COLOR_OPTIONS: { label: string; value: string }[] = [
+  { label: "Pink", value: "#ff6b9a" },
+  { label: "Mint", value: "#2dd4bf" },
+  { label: "Purple", value: "#a855f7" },
+  { label: "Sky", value: "#38bdf8" },
+  { label: "Orange", value: "#fb923c" },
+  { label: "None", value: "" },
+];
+
+function hexToRgba(hex: string, alpha: number): string {
+  const h = hex.trim().replace("#", "");
+  if (h.length !== 6 || !/^[0-9a-fA-F]+$/.test(h)) return `rgba(255,255,255,${alpha})`;
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r},${g},${b},${alpha})`;
+}
+
+function normalizeAccountColorKey(c: string | null | undefined): string {
+  return (c ?? "").trim().toLowerCase();
+}
+
+function accountAccentHex(account: Pick<AccountRow, "color">): string | null {
+  const raw = typeof account.color === "string" ? account.color.trim() : "";
+  return raw.length > 0 ? raw : null;
+}
+
 const CategoryIcon = ({ name, className }: { name: string; className?: string }) => {
   const key = (CATEGORY_ICONS as Record<string, string>)[name] ?? "dots";
   const common = {
@@ -3981,34 +4009,41 @@ export default function Home() {
                   <div>
                     <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Color</label>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {[
-                        { label: "None", value: "" },
-                        { label: "Blue", value: "#3B82F6" },
-                        { label: "Teal", value: "#14B8A6" },
-                        { label: "Green", value: "#22C55E" },
-                        { label: "Amber", value: "#F59E0B" },
-                        { label: "Pink", value: "#EC4899" },
-                      ].map((c) => {
-                        const sel = accountDraft.color === c.value;
+                      {ACCOUNT_COLOR_OPTIONS.map((c) => {
+                        const accent = c.value.trim();
+                        const sel = normalizeAccountColorKey(accountDraft.color) === normalizeAccountColorKey(c.value);
                         return (
                           <button
                             key={c.label}
                             type="button"
                             onClick={() => setAccountDraft((d) => ({ ...d, color: c.value }))}
-                            className={`rounded border px-2.5 py-1.5 text-[11px] font-medium ${
-                              sel
-                                ? "border-[color:var(--mt-border)] bg-[var(--mt-card)] text-[color:var(--mt-text)]"
-                                : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`
+                            className={`rounded-full px-3 py-2 text-[11px] font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-white/[0.06] ${
+                              accent
+                                ? sel
+                                  ? ""
+                                  : "border border-white/[0.08] bg-white/[0.03]"
+                                : sel
+                                  ? `border ${frameBorder} bg-[var(--mt-card)] text-[color:var(--mt-text)]`
+                                  : `border border-transparent bg-white/[0.02] ${headingColor} hover:text-[color:var(--mt-text)]`
                             }`}
+                            style={
+                              accent
+                                ? sel
+                                  ? {
+                                      borderColor: hexToRgba(accent, 0.35),
+                                      backgroundColor: hexToRgba(accent, 0.12),
+                                      color: accent,
+                                    }
+                                  : {
+                                      borderColor: hexToRgba(accent, 0.22),
+                                      backgroundColor: hexToRgba(accent, 0.06),
+                                      color: accent,
+                                      opacity: 0.82,
+                                    }
+                                : undefined
+                            }
                           >
-                            <span className="inline-flex items-center gap-2">
-                              {c.value ? (
-                                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value, opacity: 0.1 }} />
-                              ) : (
-                                <span className="h-2.5 w-2.5 rounded-full bg-white/10" />
-                              )}
-                              <span>{c.label}</span>
-                            </span>
+                            {c.label}
                           </button>
                         );
                       })}
@@ -4071,34 +4106,41 @@ export default function Home() {
                   <div>
                     <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Color</label>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      {[
-                        { label: "None", value: "" },
-                        { label: "Blue", value: "#3B82F6" },
-                        { label: "Teal", value: "#14B8A6" },
-                        { label: "Green", value: "#22C55E" },
-                        { label: "Amber", value: "#F59E0B" },
-                        { label: "Pink", value: "#EC4899" },
-                      ].map((c) => {
-                        const sel = accountEditDraft.color === c.value;
+                      {ACCOUNT_COLOR_OPTIONS.map((c) => {
+                        const accent = c.value.trim();
+                        const sel = normalizeAccountColorKey(accountEditDraft.color) === normalizeAccountColorKey(c.value);
                         return (
                           <button
                             key={c.label}
                             type="button"
                             onClick={() => setAccountEditDraft((d) => ({ ...d, color: c.value }))}
-                            className={`rounded border px-2.5 py-1.5 text-[11px] font-medium ${
-                              sel
-                                ? "border-[color:var(--mt-border)] bg-[var(--mt-card)] text-[color:var(--mt-text)]"
-                                : `border-transparent bg-white/[0.02] ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`
+                            className={`rounded-full px-3 py-2 text-[11px] font-medium shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:bg-white/[0.06] ${
+                              accent
+                                ? sel
+                                  ? ""
+                                  : "border border-white/[0.08] bg-white/[0.03]"
+                                : sel
+                                  ? `border ${frameBorder} bg-[var(--mt-card)] text-[color:var(--mt-text)]`
+                                  : `border border-transparent bg-white/[0.02] ${headingColor} hover:text-[color:var(--mt-text)]`
                             }`}
+                            style={
+                              accent
+                                ? sel
+                                  ? {
+                                      borderColor: hexToRgba(accent, 0.35),
+                                      backgroundColor: hexToRgba(accent, 0.12),
+                                      color: accent,
+                                    }
+                                  : {
+                                      borderColor: hexToRgba(accent, 0.22),
+                                      backgroundColor: hexToRgba(accent, 0.06),
+                                      color: accent,
+                                      opacity: 0.82,
+                                    }
+                                : undefined
+                            }
                           >
-                            <span className="inline-flex items-center gap-2">
-                              {c.value ? (
-                                <span className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: c.value, opacity: 0.1 }} />
-                              ) : (
-                                <span className="h-2.5 w-2.5 rounded-full bg-white/10" />
-                              )}
-                              <span>{c.label}</span>
-                            </span>
+                            {c.label}
                           </button>
                         );
                       })}
@@ -4919,16 +4961,40 @@ export default function Home() {
                       <div className="grid grid-cols-2 gap-3">
                         {orderedAccounts.map((a) => {
                           const lastDate = lastChangeDateByAccountId.get(a.id);
+                          const accent = accountAccentHex(a);
                           return (
-                            <div key={a.id} className={`rounded border ${frameBorder} bg-[var(--mt-card)] px-2.5 py-2`}>
-                              <div className={`text-xs uppercase tracking-[0.5px] ${itemNameColor}`}>{a.name}</div>
-                              <div className="mt-1 text-[15px] text-white">
+                            <button
+                              key={a.id}
+                              type="button"
+                              onClick={() => openAccountEdit(a)}
+                              title="Click to edit"
+                              className={`w-full text-left ${
+                                accent
+                                  ? "rounded border px-2.5 py-2 shadow-[inset_0_1px_0_rgba(255,255,255,0.04)] transition hover:brightness-110"
+                                  : `rounded border ${frameBorder} bg-[var(--mt-card)] px-2.5 py-2 transition hover:bg-[var(--mt-hover)]`
+                              }`}
+                              style={
+                                accent
+                                  ? {
+                                      borderColor: hexToRgba(accent, 0.35),
+                                      backgroundColor: hexToRgba(accent, 0.12),
+                                    }
+                                  : undefined
+                              }
+                            >
+                              <div
+                                className={`text-xs uppercase tracking-[0.5px] ${accent ? "font-medium" : itemNameColor}`}
+                                style={accent ? { color: accent } : undefined}
+                              >
+                                {a.name}
+                              </div>
+                              <div className="mt-1 text-[15px] text-[color:var(--mt-text)]">
                                 {fmt(balanceByAccountId.get(a.id) ?? a.opening_balance)}
                               </div>
                               <div className={`mt-1 text-xs ${headingColor}`}>
-                            Last updated: {lastDate ? formatLongDate(lastDate) : "—"}
+                                Last updated: {lastDate ? formatLongDate(lastDate) : "—"}
                               </div>
-                            </div>
+                            </button>
                           );
                         })}
                         {orderedAccounts.length % 2 === 1 && (
