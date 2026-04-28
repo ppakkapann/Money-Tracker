@@ -5070,7 +5070,19 @@ export default function Home() {
                                 const months = (end.getFullYear() - now.getFullYear()) * 12 + (end.getMonth() - now.getMonth());
                                 const denom = Math.max(1, months + 1);
                                 const perMonth = Math.max(0, remaining) / denom;
-                                return <div className={`shrink-0 text-right text-xs ${headingColor}`}>{`≈ Monthly ${fmt(perMonth)}`}</div>;
+                                const dayMs = 86_400_000;
+                                const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+                                const goalDayStart = new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime();
+                                const diffDays = Math.round((goalDayStart - todayStart) / dayMs);
+                                const inclusiveDays = Math.max(1, diffDays + 1);
+                                const perDay = Math.max(0, remaining) / inclusiveDays;
+                                return (
+                                  <div className={`max-w-full shrink-0 text-right text-xs leading-snug ${headingColor}`}>
+                                    <span className="whitespace-nowrap">{`≈ Monthly ${fmt(perMonth)}`}</span>
+                                    <span className="mx-1 opacity-60">/</span>
+                                    <span className="whitespace-nowrap">{`≈ Daily ${fmt(perDay)}`}</span>
+                                  </div>
+                                );
                               })()}
                             </div>
                           </button>
