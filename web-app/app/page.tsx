@@ -2100,7 +2100,12 @@ export default function Home() {
     [transactions, monthEndIso, monthStart],
   );
 
-  const txSortKey = (t: TransactionRow) => (t.created_at && t.created_at.trim() ? t.created_at : `${t.date}T00:00:00Z`);
+  const txCreatedAtKey = (t: TransactionRow) => (t.created_at && t.created_at.trim() ? t.created_at : `${t.date}T00:00:00Z`);
+  const compareExpensesNewestFirst = (a: TransactionRow, b: TransactionRow) => {
+    const byDate = b.date.localeCompare(a.date);
+    if (byDate !== 0) return byDate;
+    return txCreatedAtKey(b).localeCompare(txCreatedAtKey(a));
+  };
 
   const recentExpenseCards = useMemo(() => {
     const cutoff = new Date();
@@ -2109,7 +2114,7 @@ export default function Home() {
     const cutoffIso = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
     return txInMonth
       .filter((t) => t.type === "expense" && t.date >= cutoffIso)
-      .sort((a, b) => txSortKey(b).localeCompare(txSortKey(a)))
+      .sort(compareExpensesNewestFirst)
       .slice(0, 8);
   }, [txInMonth]);
 
@@ -5735,7 +5740,7 @@ export default function Home() {
                         {txInMonth
                           .filter((t) => t.type === "expense")
                           .slice()
-                          .sort((a, b) => txSortKey(b).localeCompare(txSortKey(a)))
+                          .sort(compareExpensesNewestFirst)
                           .map((t, idx) => {
                             const acc = accounts.find((a) => a.id === t.account_id)?.name ?? "—";
                             const cat = categories.find((c) => c.id === t.category_id)?.name ?? "—";
