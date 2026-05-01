@@ -433,9 +433,8 @@ export default function Home() {
     goal_date: "",
     color: "#103544",
   });
-  const [goals, setGoals] = useState<
-    Array<{ id: string; name: string; goal_amount: string; balance_amount: string; goal_date?: string; color?: string }>
-  >([]);
+  type UiGoal = { id: string; name: string; goal_amount: string; balance_amount: string; goal_date?: string; color?: string };
+  const [goals, setGoals] = useState<UiGoal[]>([]);
   const [goalAddDraft, setGoalAddDraft] = useState<{ name: string; goal_amount: string; balance_amount: string; goal_date: string; color: string }>({
     name: "",
     goal_amount: "",
@@ -444,13 +443,20 @@ export default function Home() {
     color: "#103544",
   });
 
-  // Persist savings goals locally (no DB table yet)
-  useEffect(() => {
-    if (typeof window === "undefined") return;
+  const goalUsesDb = Boolean(session?.user?.id && supabase);
+
+  const parseGoalAmount = (raw: string) => {
+    const cleaned = String(raw ?? "").replaceAll(",", "").trim();
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? n : 0;
+  };
+
+  const readLocalGoals = (): UiGoal[] => {
+    if (typeof window === "undefined") return [];
     try {
       const rawList = window.localStorage.getItem("mt:savingsGoals");
       if (rawList) {
-        const parsed = JSON.parse(rawList) as Array<Partial<(typeof goals)[number]>>;
+        const parsed = JSON.parse(rawList) as Array<Partial<UiGoal>>;
         const normalized =
           Array.isArray(parsed) && parsed.length > 0
             ? parsed
@@ -466,36 +472,52 @@ export default function Home() {
                 })
                 .filter(Boolean)
             : null;
-        if (normalized && normalized.length > 0) setGoals(normalized as any);
-        return;
+        return (normalized ?? []) as UiGoal[];
       }
 
       // Back-compat: old single goal key
       const rawSingle = window.localStorage.getItem("mt:savingsGoal");
-      if (!rawSingle) return;
+      if (!rawSingle) return [];
       const parsedSingle = JSON.parse(rawSingle) as Partial<{ name: string; goal_amount: string; balance_amount: string }>;
       const name = typeof parsedSingle.name === "string" ? parsedSingle.name : "";
       const goal_amount = typeof parsedSingle.goal_amount === "string" ? parsedSingle.goal_amount : "";
       const balance_amount = typeof parsedSingle.balance_amount === "string" ? parsedSingle.balance_amount : "";
-      if (name.trim()) setGoals([{ id: "legacy-0", name, goal_amount, balance_amount, color: "#103544" }]);
+      if (name.trim()) return [{ id: "legacy-0", name, goal_amount, balance_amount, color: "#103544", goal_date: "" }];
+      return [];
     } catch {
-      // ignore
+      return [];
     }
-  }, []);
+  };
+
+  // Persist savings goals locally when user is not signed in
+  useEffect(() => {
+    if (goalUsesDb) return;
+    const local = readLocalGoals();
+    if (local.length) setGoals(local as any);
+  }, [goalUsesDb]);
 
   useEffect(() => {
+    if (goalUsesDb) return;
     if (typeof window === "undefined") return;
     try {
       window.localStorage.setItem("mt:savingsGoals", JSON.stringify(goals));
     } catch {
       // ignore
     }
-  }, [goals]);
+  }, [goals, goalUsesDb]);
 
-  const deleteGoal = (id: string) => {
+  const deleteGoal = async (id: string) => {
     setGoals((prev) => prev.filter((g) => g.id !== id));
     setGoalEditOpen(false);
     setGoalEditId((cur) => (cur === id ? null : cur));
+
+    if (!goalUsesDb) return;
+    try {
+      const { error } = await supabase!.from("savings_goals").delete().eq("id", id).eq("user_id", session!.user.id);
+      if (error) throw error;
+    } catch (e) {
+      setAuthError(e instanceof Error ? e.message : "Failed to delete goal");
+    }
   };
 
   const openGoalEdit = (g: (typeof goals)[number]) => {
@@ -522,14 +544,14 @@ export default function Home() {
     setGoalEditOpen(true);
   };
 
-  const saveGoalEdit = () => {
+  const saveGoalEdit = async () => {
     if (!goalEditId) return;
     const name = goalEditDraft.name.trim();
     if (!name) {
       setAuthError("Please enter a goal name");
       return;
     }
-    setGoals((prev) =>
+    const next = (prev: UiGoal[]) =>
       prev.map((g) =>
         g.id === goalEditId
           ? {
@@ -541,8 +563,27 @@ export default function Home() {
               color: goalEditDraft.color,
             }
           : g,
-      ),
-    );
+      );
+    setGoals(next);
+
+    if (goalUsesDb) {
+      try {
+        const { error } = await supabase!
+          .from("savings_goals")
+          .update({
+            name,
+            target_amount: parseGoalAmount(goalEditDraft.goal_amount),
+            current_amount: parseGoalAmount(goalEditDraft.balance_amount),
+            target_date: goalEditDraft.goal_date.trim() || null,
+            color: goalEditDraft.color,
+          })
+          .eq("id", goalEditId)
+          .eq("user_id", session!.user.id);
+        if (error) throw error;
+      } catch (e) {
+        setAuthError(e instanceof Error ? e.message : "Failed to update goal");
+      }
+    }
     setGoalEditOpen(false);
   };
 
@@ -1987,7 +2028,7 @@ export default function Home() {
       try {
         await ensureUserDefaults();
 
-        const [acctRes, catRes, txRes] = await Promise.all([
+        const [acctRes, catRes, txRes, goalsRes] = await Promise.all([
           supabase
             .from("accounts")
             .select("id,name,opening_balance,color,archived")
@@ -2005,15 +2046,64 @@ export default function Home() {
             .from("transactions")
             .select("id,type,date,created_at,amount,name,note,account_id,category_id,from_account_id,to_account_id")
             .eq("user_id", session.user.id),
+          supabase
+            .from("savings_goals")
+            .select("id,name,target_amount,current_amount,target_date,color,created_at")
+            .eq("user_id", session.user.id)
+            .order("created_at"),
         ]);
 
         if (acctRes.error) throw acctRes.error;
         if (catRes.error) throw catRes.error;
         if (txRes.error) throw txRes.error;
+        if (goalsRes.error) throw goalsRes.error;
 
         setAccounts((acctRes.data ?? []) as AccountRow[]);
         setCategories((catRes.data ?? []) as CategoryRow[]);
         setTransactions((txRes.data ?? []) as TransactionRow[]);
+
+        const dbGoalsRaw = (goalsRes.data ?? []) as Array<{
+          id: string;
+          name: string;
+          target_amount: number;
+          current_amount: number;
+          target_date: string | null;
+          color: string | null;
+        }>;
+        const dbGoals = dbGoalsRaw.map((g) => ({
+          id: g.id,
+          name: g.name,
+          goal_amount: String(g.target_amount ?? 0),
+          balance_amount: String(g.current_amount ?? 0),
+          goal_date: g.target_date ?? "",
+          color: g.color ?? "#103544",
+        }));
+
+        // One-time migration: if DB has no goals but localStorage does, copy them into DB.
+        if (!dbGoals.length) {
+          const local = readLocalGoals();
+          if (local.length) {
+            const payload = local.map((g) => ({
+              id: g.id,
+              user_id: session.user.id,
+              name: g.name,
+              target_amount: parseGoalAmount(g.goal_amount),
+              current_amount: parseGoalAmount(g.balance_amount),
+              target_date: (g.goal_date ?? "").trim() || null,
+              color: (g.color ?? "#103544").trim() || null,
+            }));
+            const ins = await supabase.from("savings_goals").insert(payload as any);
+            if (!ins.error) {
+              setGoals(local as any);
+            } else {
+              setGoals(dbGoals as any);
+            }
+          } else {
+            setGoals(dbGoals as any);
+          }
+        } else {
+          setGoals(dbGoals as any);
+        }
       } catch (e) {
         setAuthError(e instanceof Error ? e.message : "Failed to load data");
       }
@@ -3783,17 +3873,35 @@ export default function Home() {
                         typeof crypto !== "undefined" && "randomUUID" in crypto
                           ? (crypto.randomUUID() as string)
                           : `goal-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-                      setGoals((prev) => [
-                        ...prev,
-                        {
-                          id,
-                          name,
-                          goal_amount: goalAddDraft.goal_amount.trim(),
-                          balance_amount: goalAddDraft.balance_amount.trim(),
-                          goal_date: goalAddDraft.goal_date.trim(),
-                          color: goalAddDraft.color,
-                        },
-                      ]);
+                      const nextGoal = {
+                        id,
+                        name,
+                        goal_amount: goalAddDraft.goal_amount.trim(),
+                        balance_amount: goalAddDraft.balance_amount.trim(),
+                        goal_date: goalAddDraft.goal_date.trim(),
+                        color: goalAddDraft.color,
+                      };
+                      setGoals((prev) => [...prev, nextGoal]);
+
+                      (async () => {
+                        if (!goalUsesDb) return;
+                        try {
+                          const { error } = await supabase!.from("savings_goals").insert({
+                            id,
+                            user_id: session!.user.id,
+                            name,
+                            target_amount: parseGoalAmount(goalAddDraft.goal_amount),
+                            current_amount: parseGoalAmount(goalAddDraft.balance_amount),
+                            target_date: goalAddDraft.goal_date.trim() || null,
+                            color: goalAddDraft.color,
+                          } as any);
+                          if (error) throw error;
+                        } catch (e) {
+                          setGoals((prev) => prev.filter((g) => g.id !== id));
+                          setAuthError(e instanceof Error ? e.message : "Failed to save goal");
+                        }
+                      })();
+
                       setGoalOpen(false);
                     }}
                     className="rounded bg-[#00CCCC] px-3 py-2 text-sm font-medium text-[#111]"
