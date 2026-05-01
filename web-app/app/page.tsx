@@ -588,8 +588,8 @@ export default function Home() {
   };
 
   const [activePage, setActivePage] = useState<ActivePage>("dashboard");
-  const [monthIndex, setMonthIndex] = useState(3);
-  const [year, setYear] = useState(2026);
+  const [monthIndex, setMonthIndex] = useState(() => new Date().getMonth());
+  const [year, setYear] = useState(() => new Date().getFullYear());
   const monthKey = `${year}-${String(monthIndex + 1).padStart(2, "0")}`;
   const [monthLoading, setMonthLoading] = useState(false);
 
