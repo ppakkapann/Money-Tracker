@@ -362,11 +362,7 @@ export default function Home() {
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
-  const [hoveredCategory, setHoveredCategory] = useState<{
-    categoryId: string;
-    x: number;
-    y: number;
-  } | null>(null);
+  const [categorySpentListCategoryId, setCategorySpentListCategoryId] = useState<string | null>(null);
   const [hoveredExpenseDonut, setHoveredExpenseDonut] = useState<{
     label: string;
     amount: number;
@@ -403,6 +399,8 @@ export default function Home() {
       window.removeEventListener("mouseleave", clear);
     };
   }, []);
+
+  const closeCategorySpentList = () => setCategorySpentListCategoryId(null);
 
   const [budgetTotalOverrideOpen, setBudgetTotalOverrideOpen] = useState(false);
   const [budgetTotalOverrideRaw, setBudgetTotalOverrideRaw] = useState<string>("");
@@ -2615,7 +2613,7 @@ export default function Home() {
               </svg>
 
               <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-6 text-center">
-              <div className="text-[17px] font-semibold text-[color:var(--mt-text)]">{fmt(total)}</div>
+                <div className="text-[17px] font-semibold text-[color:var(--mt-text)]">{fmt(total)}</div>
               </div>
             </div>
           </div>
@@ -5638,19 +5636,15 @@ export default function Home() {
                             </div>
                           </div>
                         </td>
-                        <td
-                          className={`px-2.5 py-2.5 text-right ${spentAmt === 0 ? "text-[#00CCCC]" : "text-[#ff5555]"}`}
-                          onMouseEnter={(e) => {
-                            const rect = (e.currentTarget as HTMLTableCellElement).getBoundingClientRect();
-                            setHoveredCategory({
-                              categoryId: b.category.id,
-                              x: Math.min(window.innerWidth - 16, rect.right + 12),
-                              y: Math.min(window.innerHeight - 16, rect.top),
-                            });
-                          }}
-                          onMouseLeave={() => setHoveredCategory(null)}
-                        >
-                          <span className="cursor-default">{spentAmt === 0 ? "฿0" : fmt(spentAmt)}</span>
+                        <td className={`px-2.5 py-2.5 text-right ${spentAmt === 0 ? "text-[#00CCCC]" : "text-[#ff5555]"}`}>
+                          <button
+                            type="button"
+                            onClick={() => setCategorySpentListCategoryId(b.category.id)}
+                            className="cursor-pointer hover:underline"
+                            title="Click to view all expenses in this category"
+                          >
+                            {spentAmt === 0 ? "฿0" : fmt(spentAmt)}
+                          </button>
                         </td>
                         <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>
                           {budgetEditCategoryId === b.category.id ? (
@@ -5683,15 +5677,8 @@ export default function Home() {
                           )}
                         </td>
                         <td className="px-2.5 py-2.5 text-right">
-                          <div className="flex items-center justify-end gap-2">
-                            <div className={`text-xs ${headingColor}`}>
-                              {budgetAmt === 0 ? (
-                                "—"
-                              ) : (
-                                <div className="text-white">{`${usagePctDisplay?.toFixed(0)}%`}</div>
-                              )}
-                            </div>
-                            <MiniDonut pct={budgetAmt > 0 ? usedPct : 0} color={dot} warn={false} />
+                          <div className={`text-xs ${headingColor}`}>
+                            {budgetAmt === 0 ? "—" : <div className="text-white">{`${usagePctDisplay?.toFixed(0)}%`}</div>}
                           </div>
                         </td>
                         <td className={`px-2.5 py-2.5 text-right text-white`}>{fmt(Math.max(remaining, 0))}</td>
@@ -5782,40 +5769,67 @@ export default function Home() {
               </div>
             </div>
 
-            {hoveredCategory && (
-              <div
-                className={`pointer-events-none fixed z-50 w-[320px] rounded border ${frameBorder} bg-black px-3 py-2.5 shadow-[0_10px_30px_rgba(0,0,0,0.55)]`}
-                style={{ left: hoveredCategory.x, top: hoveredCategory.y }}
-              >
-                {(() => {
-                  const cat = categories.find((c) => c.id === hoveredCategory.categoryId);
-                  const dot = cat ? resolveExpenseCategoryDisplayColor(cat) : "#6b7280";
-                  const rows = expensesByCategoryId.get(hoveredCategory.categoryId) ?? [];
-                  return (
-                    <>
-                      <div className="flex items-center gap-2">
-                        <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: dot }} />
-                        <div className={`text-xs uppercase tracking-[0.5px] ${itemNameColor}`}>{cat?.name ?? "Category"}</div>
-                      </div>
-                      <div className={`mt-2 max-h-[220px] space-y-2 overflow-auto text-sm ${headingColor}`}>
-                        {rows.length === 0 ? (
-                          <div className="text-xs">No expenses this month.</div>
-                        ) : (
-                          rows.slice(0, 10).map((t) => (
-                            <div key={t.id} className="flex items-start justify-between gap-2">
-                              <div className="min-w-0 flex-1">
-                                <div className={`truncate text-sm ${itemNameColor}`}>{t.name}</div>
-                                <div className={`mt-0.5 text-[11px] ${headingColor}`}>{formatLongDate(t.date)}</div>
-                              </div>
-                              <div className="shrink-0 text-right text-sm text-[#ff5555]">{fmt(t.amount)}</div>
+            {categorySpentListCategoryId && (
+              <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4" onMouseDown={closeCategorySpentList}>
+                <div
+                  className={`w-full max-w-lg rounded border ${frameBorder} bg-[var(--mt-panel)] shadow-[0_10px_30px_rgba(0,0,0,0.35)]`}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  {(() => {
+                    const cat = categories.find((c) => c.id === categorySpentListCategoryId);
+                    const dot = cat ? resolveExpenseCategoryDisplayColor(cat) : "#6b7280";
+                    const rows = expensesByCategoryId.get(categorySpentListCategoryId) ?? [];
+                    const total = rows.reduce((s, t) => s + t.amount, 0);
+                    return (
+                      <>
+                        <div className={`flex items-center justify-between border-b ${frameBorder} px-3.5 py-2`}>
+                          <div className="flex min-w-0 items-center gap-2">
+                            <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: dot }} />
+                            <div className="min-w-0">
+                              <div className="truncate text-sm font-semibold text-[color:var(--mt-text)]">{cat?.name ?? "Category"}</div>
+                              <div className={`text-[11px] ${headingColor}`}>{`Total: ${fmt(total)}`}</div>
                             </div>
-                          ))
-                        )}
-                        {rows.length > 10 && <div className="text-[11px]">…and {rows.length - 10} more</div>}
-                      </div>
-                    </>
-                  );
-                })()}
+                          </div>
+                          <button
+                            type="button"
+                            onClick={closeCategorySpentList}
+                            className={`rounded border ${frameBorder} bg-white/[0.02] px-2 py-1 text-sm ${headingColor} hover:bg-white/[0.04] hover:text-[color:var(--mt-text)]`}
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        <div className="p-3.5">
+                          <div className={`max-h-[65vh] space-y-2 overflow-auto text-sm ${headingColor}`}>
+                            {rows.length === 0 ? (
+                              <div className="text-xs">No expenses this month.</div>
+                            ) : (
+                              rows.map((t) => (
+                                <div key={t.id} className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        closeCategorySpentList();
+                                        openEditExpense(t);
+                                      }}
+                                      className={`block w-full truncate text-left text-sm ${itemNameColor} hover:text-[color:var(--mt-text)]`}
+                                      title="Click to edit expense"
+                                    >
+                                      {t.name}
+                                    </button>
+                                    <div className={`mt-0.5 text-[11px] ${headingColor}`}>{formatLongDate(t.date)}</div>
+                                  </div>
+                                  <div className="shrink-0 text-right text-sm text-[#ff5555]">{fmt(t.amount)}</div>
+                                </div>
+                              ))
+                            )}
+                          </div>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </div>
               </div>
             )}
 

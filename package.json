@@ -1,4 +1,8 @@
 {
+  "private": true,
+  "scripts": {
+    "dev": "npm run dev --prefix web-app"
+  },
   "dependencies": {
     "@supabase/supabase-js": "^2.104.0"
   }

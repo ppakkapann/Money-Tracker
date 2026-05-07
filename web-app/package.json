@@ -6,7 +6,7 @@
     "node": ">=20 <23"
   },
   "scripts": {
-    "dev": "next dev -p 3000",
+    "dev": "(kill-port 3002 || true) && sleep 2 && next dev -p 3002",
     "build": "next build",
     "start": "next start",
     "lint": "eslint"
@@ -24,6 +24,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.2.4",
+    "kill-port": "^2.0.1",
     "tailwindcss": "^4",
     "typescript": "^5"
   }
