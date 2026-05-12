@@ -612,6 +612,44 @@ export default function Home() {
   const [categoryMonthSettings, setCategoryMonthSettings] = useState<CategoryMonthSettingRow[]>([]);
   const [transactions, setTransactions] = useState<TransactionRow[]>([]);
   const [billsMonthly, setBillsMonthly] = useState<BillMonthlyRow[]>([]);
+  // Server-side aggregates so we never need to download every transaction
+  // just to compute account balances / last-activity dates.
+  const [accountDeltaNow, setAccountDeltaNow] = useState<Map<string, number>>(new Map());
+  const [accountLastChange, setAccountLastChange] = useState<Map<string, string>>(new Map());
+  const [accountDeltaPrevMonthEnd, setAccountDeltaPrevMonthEnd] = useState<Map<string, number>>(new Map());
+
+  // Apply (sign +1) or revert (sign -1) a single transaction's effect to the
+  // cached account balance deltas so the UI updates instantly without waiting
+  // for a server-side aggregate refetch. The server snapshot already covers
+  // every other transaction, so adjusting just this row keeps the totals
+  // accurate even though we no longer load the full ledger into memory.
+  const applyLocalTxDelta = (tx: TransactionRow, sign: 1 | -1) => {
+    const prevMonthKeyLocal = addMonthsToKey(monthKey, -1);
+    const yyyy = Number(prevMonthKeyLocal.slice(0, 4));
+    const mm = Number(prevMonthKeyLocal.slice(5, 7));
+    const prevMonthEndDate = new Date(yyyy, mm, 0);
+    const prevMonthEndIsoLocal = `${prevMonthKeyLocal}-${String(prevMonthEndDate.getDate()).padStart(2, "0")}`;
+
+    const adjust = (map: Map<string, number>) => {
+      const next = new Map(map);
+      const bump = (key: string | null, change: number) => {
+        if (!key) return;
+        next.set(key, (next.get(key) ?? 0) + sign * change);
+      };
+      if (tx.type === "income") bump(tx.account_id, tx.amount);
+      else if (tx.type === "expense") bump(tx.account_id, -tx.amount);
+      else if (tx.type === "transfer") {
+        bump(tx.from_account_id, -tx.amount);
+        bump(tx.to_account_id, tx.amount);
+      }
+      return next;
+    };
+
+    setAccountDeltaNow((prev) => adjust(prev));
+    if (tx.date <= prevMonthEndIsoLocal) {
+      setAccountDeltaPrevMonthEnd((prev) => adjust(prev));
+    }
+  };
 
   const monthDefaultDate = useMemo(() => {
     const today = todayIsoLocal();
@@ -720,6 +758,7 @@ export default function Home() {
         const { data, error } = await supabase.from("transactions").insert(payload).select("*").single();
         if (error) throw error;
         setTransactions((prev) => [...prev, data as TransactionRow]);
+        applyLocalTxDelta(data as TransactionRow, 1);
       } else {
         const payload = {
           date: expenseDraft.date,
@@ -730,6 +769,7 @@ export default function Home() {
           category_id: expenseDraft.category_id ? expenseDraft.category_id : null,
         };
 
+        const oldTx = transactions.find((t) => t.id === expenseEditingId) ?? null;
         const { data, error } = await supabase
           .from("transactions")
           .update(payload)
@@ -739,6 +779,8 @@ export default function Home() {
           .single();
         if (error) throw error;
         setTransactions((prev) => prev.map((t) => (t.id === expenseEditingId ? (data as TransactionRow) : t)));
+        if (oldTx) applyLocalTxDelta(oldTx, -1);
+        applyLocalTxDelta(data as TransactionRow, 1);
       }
 
       setExpenseOpen(false);
@@ -757,6 +799,7 @@ export default function Home() {
     setAuthError(null);
     setExpenseSaving(true);
     try {
+      const oldTx = transactions.find((t) => t.id === expenseEditingId) ?? null;
       const { error } = await supabase
         .from("transactions")
         .delete()
@@ -765,6 +808,7 @@ export default function Home() {
       if (error) throw error;
 
       setTransactions((prev) => prev.filter((t) => t.id !== expenseEditingId));
+      if (oldTx) applyLocalTxDelta(oldTx, -1);
       setExpenseOpen(false);
     } catch (e) {
       setAuthError(e instanceof Error ? e.message : "Failed to delete expense");
@@ -859,6 +903,7 @@ export default function Home() {
         const { data, error } = await supabase.from("transactions").insert(payload).select("*").single();
         if (error) throw error;
         setTransactions((prev) => [...prev, data as TransactionRow]);
+        applyLocalTxDelta(data as TransactionRow, 1);
       } else {
         const payload = {
           date: incomeDraft.date,
@@ -869,6 +914,7 @@ export default function Home() {
           category_id: null,
         };
 
+        const oldTx = transactions.find((t) => t.id === incomeEditingId) ?? null;
         const { data, error } = await supabase
           .from("transactions")
           .update(payload)
@@ -878,6 +924,8 @@ export default function Home() {
           .single();
         if (error) throw error;
         setTransactions((prev) => prev.map((t) => (t.id === incomeEditingId ? (data as TransactionRow) : t)));
+        if (oldTx) applyLocalTxDelta(oldTx, -1);
+        applyLocalTxDelta(data as TransactionRow, 1);
       }
 
       setIncomeOpen(false);
@@ -897,6 +945,7 @@ export default function Home() {
     setAuthError(null);
     setIncomeSaving(true);
     try {
+      const oldTx = transactions.find((t) => t.id === incomeEditingId) ?? null;
       const { error } = await supabase
         .from("transactions")
         .delete()
@@ -905,6 +954,7 @@ export default function Home() {
       if (error) throw error;
 
       setTransactions((prev) => prev.filter((t) => t.id !== incomeEditingId));
+      if (oldTx) applyLocalTxDelta(oldTx, -1);
       setIncomeOpen(false);
       setIncomeDeleteConfirmOpen(false);
     } catch (e) {
@@ -1013,6 +1063,7 @@ export default function Home() {
         const { data, error } = await supabase.from("transactions").insert(payload).select("*").single();
         if (error) throw error;
         setTransactions((prev) => [...prev, data as TransactionRow]);
+        applyLocalTxDelta(data as TransactionRow, 1);
       } else {
         const payload = {
           date: transferDraft.date,
@@ -1024,6 +1075,7 @@ export default function Home() {
           account_id: null,
           category_id: null,
         };
+        const oldTx = transactions.find((t) => t.id === transferEditingId) ?? null;
         const { data, error } = await supabase
           .from("transactions")
           .update(payload)
@@ -1033,6 +1085,8 @@ export default function Home() {
           .single();
         if (error) throw error;
         setTransactions((prev) => prev.map((t) => (t.id === transferEditingId ? (data as TransactionRow) : t)));
+        if (oldTx) applyLocalTxDelta(oldTx, -1);
+        applyLocalTxDelta(data as TransactionRow, 1);
       }
 
       setTransferOpen(false);
@@ -1051,6 +1105,7 @@ export default function Home() {
     setAuthError(null);
     setTransferSaving(true);
     try {
+      const oldTx = transactions.find((t) => t.id === transferEditingId) ?? null;
       const { error } = await supabase
         .from("transactions")
         .delete()
@@ -1059,6 +1114,7 @@ export default function Home() {
       if (error) throw error;
 
       setTransactions((prev) => prev.filter((t) => t.id !== transferEditingId));
+      if (oldTx) applyLocalTxDelta(oldTx, -1);
       setTransferOpen(false);
     } catch (e) {
       setAuthError(e instanceof Error ? e.message : "Failed to delete transfer");
@@ -2026,7 +2082,7 @@ export default function Home() {
       try {
         await ensureUserDefaults();
 
-        const [acctRes, catRes, txRes, goalsRes] = await Promise.all([
+        const [acctRes, catRes, goalsRes, balNowRes] = await Promise.all([
           supabase
             .from("accounts")
             .select("id,name,opening_balance,color,archived")
@@ -2041,24 +2097,34 @@ export default function Home() {
             .order("kind")
             .order("name"),
           supabase
-            .from("transactions")
-            .select("id,type,date,created_at,amount,name,note,account_id,category_id,from_account_id,to_account_id")
-            .eq("user_id", session.user.id),
-          supabase
             .from("savings_goals")
             .select("id,name,target_amount,current_amount,target_date,color,created_at")
             .eq("user_id", session.user.id)
             .order("created_at"),
+          supabase.rpc("account_balances_as_of", { p_cutoff: null }),
         ]);
 
         if (acctRes.error) throw acctRes.error;
         if (catRes.error) throw catRes.error;
-        if (txRes.error) throw txRes.error;
         if (goalsRes.error) throw goalsRes.error;
+        if (balNowRes.error) throw balNowRes.error;
 
         setAccounts((acctRes.data ?? []) as AccountRow[]);
         setCategories((catRes.data ?? []) as CategoryRow[]);
-        setTransactions((txRes.data ?? []) as TransactionRow[]);
+        {
+          const deltaMap = new Map<string, number>();
+          const lastMap = new Map<string, string>();
+          ((balNowRes.data ?? []) as Array<{
+            account_id: string;
+            balance_delta: number | string;
+            last_change: string | null;
+          }>).forEach((r) => {
+            deltaMap.set(r.account_id, Number(r.balance_delta) || 0);
+            if (r.last_change) lastMap.set(r.account_id, r.last_change);
+          });
+          setAccountDeltaNow(deltaMap);
+          setAccountLastChange(lastMap);
+        }
 
         const dbGoalsRaw = (goalsRes.data ?? []) as Array<{
           id: string;
@@ -2109,18 +2175,32 @@ export default function Home() {
   }, [session?.user?.id, supabase]);
 
   // ---------------------------------------------------------------------------
-  // Month-scoped data loading (budgets/bills/category-month settings)
+  // Month-scoped data loading (budgets/bills/category-month settings + a 2-month
+  // window of transactions + prev-month-end balance snapshot). Loading only the
+  // visible window keeps the app fast even with years of history; account
+  // balances stay accurate because the all-time aggregate is fetched via RPC.
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!session?.user?.id) return;
     if (!supabase) return;
 
     let cancelled = false;
+    const monthEndDate = new Date(year, monthIndex + 1, 0);
+    const monthEndIsoLocal = `${monthKey}-${String(monthEndDate.getDate()).padStart(2, "0")}`;
+    const prevMonthKeyLocal = addMonthsToKey(monthKey, -1);
+    const prevMonthEndDate = (() => {
+      const yyyy = Number(prevMonthKeyLocal.slice(0, 4));
+      const mm = Number(prevMonthKeyLocal.slice(5, 7));
+      return new Date(yyyy, mm, 0);
+    })();
+    const prevMonthEndIsoLocal = `${prevMonthKeyLocal}-${String(prevMonthEndDate.getDate()).padStart(2, "0")}`;
+    const prevMonthStartLocal = `${prevMonthKeyLocal}-01`;
+
     (async () => {
       setAuthError(null);
       setMonthLoading(true);
       try {
-        const [budgetRes, catMonthRes, billsRes] = await Promise.all([
+        const [budgetRes, catMonthRes, billsRes, txRes, balPrevRes] = await Promise.all([
           supabase.from("budgets").select("id,month,category_id,amount").eq("user_id", session.user.id).eq("month", monthKey),
           supabase.from("category_month_settings").select("id,month,category_id,hidden").eq("user_id", session.user.id).eq("month", monthKey),
           supabase
@@ -2130,11 +2210,20 @@ export default function Home() {
             .eq("month", monthKey)
             .order("due_date")
             .order("name"),
+          supabase
+            .from("transactions")
+            .select("id,type,date,created_at,amount,name,note,account_id,category_id,from_account_id,to_account_id")
+            .eq("user_id", session.user.id)
+            .gte("date", prevMonthStartLocal)
+            .lte("date", monthEndIsoLocal),
+          supabase.rpc("account_balances_as_of", { p_cutoff: prevMonthEndIsoLocal }),
         ]);
 
         if (budgetRes.error) throw budgetRes.error;
         if (catMonthRes.error) throw catMonthRes.error;
         if (billsRes.error) throw billsRes.error;
+        if (txRes.error) throw txRes.error;
+        if (balPrevRes.error) throw balPrevRes.error;
 
         if (cancelled) return;
         setBudgets((budgetRes.data ?? []) as BudgetRow[]);
@@ -2150,6 +2239,15 @@ export default function Home() {
             return a.id.localeCompare(b.id);
           }),
         );
+        setTransactions((txRes.data ?? []) as TransactionRow[]);
+        const deltaPrevMap = new Map<string, number>();
+        ((balPrevRes.data ?? []) as Array<{
+          account_id: string;
+          balance_delta: number | string;
+        }>).forEach((r) => {
+          deltaPrevMap.set(r.account_id, Number(r.balance_delta) || 0);
+        });
+        setAccountDeltaPrevMonthEnd(deltaPrevMap);
       } catch (e) {
         if (!cancelled) setAuthError(e instanceof Error ? e.message : "Failed to load data");
       } finally {
@@ -2160,7 +2258,7 @@ export default function Home() {
     return () => {
       cancelled = true;
     };
-  }, [monthKey, session?.user?.id, supabase]);
+  }, [monthKey, monthIndex, year, session?.user?.id, supabase]);
 
   // ---------------------------------------------------------------------------
   // Derived month ranges & helpers
@@ -2641,58 +2739,33 @@ export default function Home() {
   const unpaidCount = billsMonthly.length - paidCount;
   const billsTotal = billsMonthly.reduce((sum, b) => sum + b.amount, 0);
 
-  const totalAccountBalance = useMemo(() => {
-    const byId = new Map<string, number>();
-    accounts.forEach((a) => byId.set(a.id, a.opening_balance));
-
-    transactions.forEach((t) => {
-      if (t.type === "income" && t.account_id) byId.set(t.account_id, (byId.get(t.account_id) ?? 0) + t.amount);
-      if (t.type === "expense" && t.account_id) byId.set(t.account_id, (byId.get(t.account_id) ?? 0) - t.amount);
-      if (t.type === "transfer" && t.from_account_id && t.to_account_id) {
-        byId.set(t.from_account_id, (byId.get(t.from_account_id) ?? 0) - t.amount);
-        byId.set(t.to_account_id, (byId.get(t.to_account_id) ?? 0) + t.amount);
-      }
-    });
-
-    return Array.from(byId.values()).reduce((s, n) => s + n, 0);
-  }, [accounts, transactions]);
-
-  const totalAccountBalancePrevMonthEnd = useMemo(() => {
-    const cutoff = prevMonthEndIso;
-    const byId = new Map<string, number>();
-    accounts.forEach((a) => byId.set(a.id, a.opening_balance));
-
-    transactions.forEach((t) => {
-      if (t.date > cutoff) return;
-      if (t.type === "income" && t.account_id) byId.set(t.account_id, (byId.get(t.account_id) ?? 0) + t.amount);
-      if (t.type === "expense" && t.account_id) byId.set(t.account_id, (byId.get(t.account_id) ?? 0) - t.amount);
-      if (t.type === "transfer" && t.from_account_id && t.to_account_id) {
-        byId.set(t.from_account_id, (byId.get(t.from_account_id) ?? 0) - t.amount);
-        byId.set(t.to_account_id, (byId.get(t.to_account_id) ?? 0) + t.amount);
-      }
-    });
-
-    return Array.from(byId.values()).reduce((s, n) => s + n, 0);
-  }, [accounts, prevMonthEndIso, transactions]);
-
   const balanceByAccountId = useMemo(() => {
     const byId = new Map<string, number>();
-    accounts.forEach((a) => byId.set(a.id, a.opening_balance));
-
-    transactions.forEach((t) => {
-      if (t.type === "income" && t.account_id) byId.set(t.account_id, (byId.get(t.account_id) ?? 0) + t.amount);
-      if (t.type === "expense" && t.account_id) byId.set(t.account_id, (byId.get(t.account_id) ?? 0) - t.amount);
-      if (t.type === "transfer" && t.from_account_id && t.to_account_id) {
-        byId.set(t.from_account_id, (byId.get(t.from_account_id) ?? 0) - t.amount);
-        byId.set(t.to_account_id, (byId.get(t.to_account_id) ?? 0) + t.amount);
-      }
-    });
-
+    accounts.forEach((a) => byId.set(a.id, a.opening_balance + (accountDeltaNow.get(a.id) ?? 0)));
     return byId;
-  }, [accounts, transactions]);
+  }, [accounts, accountDeltaNow]);
 
+  const totalAccountBalance = useMemo(
+    () => Array.from(balanceByAccountId.values()).reduce((s, n) => s + n, 0),
+    [balanceByAccountId],
+  );
+
+  const totalAccountBalancePrevMonthEnd = useMemo(
+    () =>
+      accounts.reduce(
+        (s, a) => s + a.opening_balance + (accountDeltaPrevMonthEnd.get(a.id) ?? 0),
+        0,
+      ),
+    [accounts, accountDeltaPrevMonthEnd],
+  );
+
+  // Fold the currently loaded transaction window into `lastChange` so that
+  // newly-added transactions update the UI immediately without waiting for a
+  // refetch. The server-side aggregate covers everything outside that window.
   const lastChangeDateByAccountId = useMemo(() => {
     const byId = new Map<string, string>();
+    accountLastChange.forEach((v, k) => byId.set(k, v));
+
     const consider = (accountId: string | null, isoDate: string) => {
       if (!accountId) return;
       const prev = byId.get(accountId);
@@ -2711,7 +2784,7 @@ export default function Home() {
     });
 
     return byId;
-  }, [transactions]);
+  }, [accountLastChange, transactions]);
 
   const orderedAccounts = useMemo(() => {
     const preferred = ["Kasikorn", "Krungsri", "Krungthai", "Bangkok Bank", "Cash"];
