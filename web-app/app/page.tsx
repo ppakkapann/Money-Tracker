@@ -258,6 +258,15 @@ const CategoryIcon = ({ name, className }: { name: string; className?: string })
   );
 };
 
+function errorMessage(e: unknown, fallback: string): string {
+  if (e instanceof Error && e.message.trim()) return e.message;
+  if (e && typeof e === "object" && "message" in e) {
+    const msg = (e as { message: unknown }).message;
+    if (typeof msg === "string" && msg.trim()) return msg;
+  }
+  return fallback;
+}
+
 type NavPage = "dashboard" | "accounts" | "bills" | "categories" | "expenses" | "income";
 
 const NavIcon = ({ page, className }: { page: NavPage; className?: string }) => {
@@ -1004,6 +1013,9 @@ export default function Home() {
   const openTransfer = () => {
     setAuthError(null);
     setTransferEditingId(null);
+    if (orderedAccounts.length < 2) {
+      setAuthError("Add at least two accounts before creating a transfer.");
+    }
     const first = defaultAccountId || orderedAccounts[0]?.id || accounts[0]?.id || "";
     const second =
       orderedAccounts.find((a) => a.id !== first)?.id ??
@@ -1040,13 +1052,20 @@ export default function Home() {
   };
 
   const saveTransfer = async () => {
-    if (!session?.user?.id) return;
-    if (!supabase) return;
+    if (!session?.user?.id) {
+      setAuthError("Please sign in to save a transfer.");
+      return;
+    }
+    if (!supabase) {
+      setAuthError("Supabase is not configured.");
+      return;
+    }
 
     setAuthError(null);
     setTransferSaving(true);
     try {
       const amount = Number.parseFloat(transferDraft.amount.replace(/[฿,]/g, ""));
+      if (orderedAccounts.length < 2) throw new Error("Add at least two accounts before creating a transfer.");
       if (!transferDraft.from_account_id) throw new Error("Please select a from account");
       if (!transferDraft.to_account_id) throw new Error("Please select a to account");
       if (transferDraft.from_account_id === transferDraft.to_account_id) throw new Error("From and To must be different");
@@ -1098,7 +1117,7 @@ export default function Home() {
 
       setTransferOpen(false);
     } catch (e) {
-      setAuthError(e instanceof Error ? e.message : "Failed to save transfer");
+      setAuthError(errorMessage(e, "Failed to save transfer"));
     } finally {
       setTransferSaving(false);
     }
@@ -1124,7 +1143,7 @@ export default function Home() {
       if (oldTx) applyLocalTxDelta(oldTx, -1);
       setTransferOpen(false);
     } catch (e) {
-      setAuthError(e instanceof Error ? e.message : "Failed to delete transfer");
+      setAuthError(errorMessage(e, "Failed to delete transfer"));
     } finally {
       setTransferSaving(false);
     }
@@ -3623,6 +3642,11 @@ export default function Home() {
                 </div>
 
                 <div className="space-y-3 p-3.5">
+                  {authError && (
+                    <div className="rounded border border-[color:var(--mt-danger)]/40 bg-[color:var(--mt-danger)]/10 px-2.5 py-2 text-sm text-[color:var(--mt-danger)]">
+                      {authError}
+                    </div>
+                  )}
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Date</label>

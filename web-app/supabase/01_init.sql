@@ -96,7 +96,7 @@ create table if not exists public.transactions (
   constraint tx_expense_income_requires_account check (
     (type in ('expense','income') and account_id is not null and from_account_id is null and to_account_id is null)
     or
-    (type = 'transfer' and account_id is null and category_id is null and from_account_id is not null and to_account_id is not null and from_account_id <> to_account_id)
+    (type = 'transfer' and account_id is null and from_account_id is not null and to_account_id is not null and from_account_id <> to_account_id)
   )
 );
 
