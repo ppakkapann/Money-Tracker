@@ -675,6 +675,9 @@ export default function Home() {
   const [expenseSaving, setExpenseSaving] = useState(false);
   const [expenseCalendarOpen, setExpenseCalendarOpen] = useState(false);
   const [expenseEditingId, setExpenseEditingId] = useState<string | null>(null);
+  type ExpenseTableSort = "date-desc" | "date-asc" | "category" | "account";
+  const [expenseSearch, setExpenseSearch] = useState("");
+  const [expenseSort, setExpenseSort] = useState<ExpenseTableSort>("date-desc");
   const [expenseDraft, setExpenseDraft] = useState<{
     date: string;
     amount: string;
@@ -981,6 +984,7 @@ export default function Home() {
     note: string;
     from_account_id: string;
     to_account_id: string;
+    category_id: string;
   }>({
     date: monthDefaultDate,
     amount: "",
@@ -988,6 +992,7 @@ export default function Home() {
     note: "",
     from_account_id: "",
     to_account_id: "",
+    category_id: "",
   });
 
   useEffect(() => {
@@ -1011,6 +1016,7 @@ export default function Home() {
       note: "",
       from_account_id: first,
       to_account_id: second,
+      category_id: "",
     });
     setTransferCalendarOpen(false);
     setTransferOpen(true);
@@ -1027,6 +1033,7 @@ export default function Home() {
       note: tx.note ?? "",
       from_account_id: tx.from_account_id ?? "",
       to_account_id: tx.to_account_id ?? "",
+      category_id: tx.category_id ?? "",
     });
     setTransferCalendarOpen(false);
     setTransferOpen(true);
@@ -1056,7 +1063,7 @@ export default function Home() {
           name: transferDraft.name.trim(),
           note: transferDraft.note.trim() ? transferDraft.note.trim() : null,
           account_id: null,
-          category_id: null,
+          category_id: transferDraft.category_id ? transferDraft.category_id : null,
           from_account_id: transferDraft.from_account_id,
           to_account_id: transferDraft.to_account_id,
         };
@@ -1073,7 +1080,7 @@ export default function Home() {
           from_account_id: transferDraft.from_account_id,
           to_account_id: transferDraft.to_account_id,
           account_id: null,
-          category_id: null,
+          category_id: transferDraft.category_id ? transferDraft.category_id : null,
         };
         const oldTx = transactions.find((t) => t.id === transferEditingId) ?? null;
         const { data, error } = await supabase
@@ -2292,6 +2299,11 @@ export default function Home() {
     if (byDate !== 0) return byDate;
     return txCreatedAtKey(b).localeCompare(txCreatedAtKey(a));
   };
+  const compareExpensesOldestFirst = (a: TransactionRow, b: TransactionRow) => {
+    const byDate = a.date.localeCompare(b.date);
+    if (byDate !== 0) return byDate;
+    return txCreatedAtKey(a).localeCompare(txCreatedAtKey(b));
+  };
 
   const recentExpenseCards = useMemo(() => {
     const cutoff = new Date();
@@ -2333,12 +2345,14 @@ export default function Home() {
 
   const spentByCategoryId = useMemo(() => {
     const m = new Map<string, number>();
-    txInMonth
-      .filter((t) => t.type === "expense")
-      .forEach((t) => {
-        const key = t.category_id ?? "__uncategorized__";
-        m.set(key, (m.get(key) ?? 0) + t.amount);
-      });
+    const bump = (categoryId: string | null, amount: number) => {
+      const key = categoryId ?? "__uncategorized__";
+      m.set(key, (m.get(key) ?? 0) + amount);
+    };
+    txInMonth.forEach((t) => {
+      if (t.type === "expense") bump(t.category_id, t.amount);
+      else if (t.type === "transfer" && t.category_id) bump(t.category_id, t.amount);
+    });
     return m;
   }, [txInMonth]);
 
@@ -2460,17 +2474,66 @@ export default function Home() {
 
   const expensesTxInMonth = useMemo(() => txInMonth.filter((t) => t.type === "expense"), [txInMonth]);
 
+  const expenseCategorySortRank = useMemo(() => {
+    const rank = new Map<string, number>();
+    const totals = [...spentByCategoryId.entries()].map(([key, total]) => ({ key, total }));
+    totals.sort((a, b) => b.total - a.total);
+    totals.forEach((row, i) => rank.set(row.key, i));
+    return rank;
+  }, [spentByCategoryId]);
+
+  const expenseAccountSortRank = useMemo(() => {
+    const totalsByAccount = new Map<string, number>();
+    expensesTxInMonth.forEach((t) => {
+      const key = t.account_id ?? "__none__";
+      totalsByAccount.set(key, (totalsByAccount.get(key) ?? 0) + t.amount);
+    });
+    const rank = new Map<string, number>();
+    const totals = [...totalsByAccount.entries()].map(([key, total]) => ({ key, total }));
+    totals.sort((a, b) => b.total - a.total);
+    totals.forEach((row, i) => rank.set(row.key, i));
+    return rank;
+  }, [expensesTxInMonth]);
+
+  const displayedExpenses = useMemo(() => {
+    const q = expenseSearch.trim().toLowerCase();
+    let rows = expensesTxInMonth;
+    if (q) rows = rows.filter((t) => t.name.toLowerCase().includes(q));
+
+    const sorted = [...rows];
+    if (expenseSort === "date-desc") sorted.sort(compareExpensesNewestFirst);
+    else if (expenseSort === "date-asc") sorted.sort(compareExpensesOldestFirst);
+    else if (expenseSort === "category") {
+      sorted.sort((a, b) => {
+        const ra = expenseCategorySortRank.get(a.category_id ?? "__uncategorized__") ?? 9999;
+        const rb = expenseCategorySortRank.get(b.category_id ?? "__uncategorized__") ?? 9999;
+        if (ra !== rb) return ra - rb;
+        return compareExpensesNewestFirst(a, b);
+      });
+    } else if (expenseSort === "account") {
+      sorted.sort((a, b) => {
+        const ra = expenseAccountSortRank.get(a.account_id ?? "__none__") ?? 9999;
+        const rb = expenseAccountSortRank.get(b.account_id ?? "__none__") ?? 9999;
+        if (ra !== rb) return ra - rb;
+        return compareExpensesNewestFirst(a, b);
+      });
+    }
+    return sorted;
+  }, [expenseAccountSortRank, expenseCategorySortRank, expenseSearch, expenseSort, expensesTxInMonth]);
+
   const expensesByCategoryId = useMemo(() => {
     const m = new Map<string, TransactionRow[]>();
-    expensesTxInMonth.forEach((t) => {
+    const push = (t: TransactionRow) => {
       const key = t.category_id ?? "__uncategorized__";
       const arr = m.get(key) ?? [];
       arr.push(t);
       m.set(key, arr);
-    });
-    for (const arr of m.values()) arr.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    };
+    expensesTxInMonth.forEach(push);
+    txInMonth.filter((t) => t.type === "transfer" && t.category_id).forEach(push);
+    for (const arr of m.values()) arr.sort(compareExpensesNewestFirst);
     return m;
-  }, [expensesTxInMonth]);
+  }, [expensesTxInMonth, txInMonth]);
 
   const polarToCartesian = (cx: number, cy: number, r: number, angleDeg: number) => {
     const rad = ((angleDeg - 90) * Math.PI) / 180;
@@ -3693,6 +3756,47 @@ export default function Home() {
                             }`}
                           >
                             {a.name}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className={`block text-xs uppercase tracking-[0.5px] ${headingColor}`}>Category (optional)</label>
+                    <p className={`mt-0.5 text-[11px] ${headingColor}`}>None = ไม่ตัดงบหมวด · เลือกหมวด = ยอดใช้จ่ายหมวดนั้นลดตามจำนวนโอน</p>
+                    <div className="mt-2 grid grid-cols-4 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setTransferDraft((d) => ({ ...d, category_id: "" }))}
+                        className={`rounded border px-2 py-2 text-center text-[10px] font-medium ${
+                          transferDraft.category_id === ""
+                            ? "border-[#00CCCC] bg-[#00CCCC]/10 text-[#00CCCC]"
+                            : `border-transparent bg-white/[0.02] ${itemNameColor} hover:text-[color:var(--mt-text)]`
+                        }`}
+                      >
+                        None
+                      </button>
+                      {sortExpenseCategoriesByDisplayOrder(
+                        categories.filter((c) => c.kind === "expense" && !c.archived && !hiddenCategoryIdsForMonth.has(c.id)),
+                      ).map((c) => {
+                        const sel = transferDraft.category_id === c.id;
+                        const col = resolveExpenseCategoryDisplayColor(c);
+                        return (
+                          <button
+                            key={`tr-cat-${c.id}`}
+                            type="button"
+                            onClick={() => setTransferDraft((d) => ({ ...d, category_id: c.id }))}
+                            className={`rounded border px-2 py-2 text-center ${
+                              sel ? "border-[#00CCCC] bg-[#00CCCC]/10" : `border-transparent bg-white/[0.02] hover:border-[#444747]`
+                            }`}
+                          >
+                            <div className="flex flex-col items-center gap-1">
+                              <span style={{ color: col }}>
+                                <CategoryIcon name={c.name} className="inline-flex h-5 w-5 items-center justify-center" />
+                              </span>
+                              <span className={`line-clamp-2 text-[9px] leading-tight ${sel ? "text-[color:var(--mt-text)]" : itemNameColor}`}>{c.name}</span>
+                            </div>
                           </button>
                         );
                       })}
@@ -5434,6 +5538,7 @@ export default function Home() {
                           .map((t) => {
                             const from = accounts.find((a) => a.id === t.from_account_id)?.name ?? "—";
                             const to = accounts.find((a) => a.id === t.to_account_id)?.name ?? "—";
+                            const cat = t.category_id ? (categories.find((c) => c.id === t.category_id)?.name ?? "—") : null;
                             return (
                               <div key={t.id} className={`border-b ${frameBorder} py-2 text-sm last:border-0`}>
                                 <div className="mb-0.5 flex justify-between">
@@ -5454,6 +5559,12 @@ export default function Home() {
                                     <span className="text-[#898989]">To account</span> <span className="text-white/80">{to}</span>
                                   </span>
                                 </div>
+                                {cat ? (
+                                  <div className={`mt-1 text-[11px] ${headingColor}`}>
+                                    <span className="text-[#898989]">Category</span>{" "}
+                                    <CategoryBadge category={cat} />
+                                  </div>
+                                ) : null}
                               </div>
                             );
                           })
@@ -5550,6 +5661,7 @@ export default function Home() {
                         <th className="px-2.5 py-2 text-right font-normal">Amount</th>
                         <th className="px-2.5 py-2 text-right font-normal">From</th>
                         <th className="px-2.5 py-2 text-right font-normal">To</th>
+                        <th className="hidden px-2.5 py-2 text-right font-normal sm:table-cell">Category</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -5558,6 +5670,7 @@ export default function Home() {
                         .map((t) => {
                           const from = accounts.find((a) => a.id === t.from_account_id)?.name ?? "—";
                           const to = accounts.find((a) => a.id === t.to_account_id)?.name ?? "—";
+                          const cat = t.category_id ? (categories.find((c) => c.id === t.category_id)?.name ?? "—") : "—";
                           return (
                             <tr key={t.id} className={`border-b ${frameBorder} last:border-0`}>
                             <td className={`px-2.5 py-2.5 ${itemNameColor}`}>
@@ -5569,6 +5682,15 @@ export default function Home() {
                               <td className="px-2.5 py-2.5 text-right text-[#ff5555]">{fmt(t.amount)}</td>
                               <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>{from}</td>
                               <td className={`px-2.5 py-2.5 text-right ${itemNameColor}`}>{to}</td>
+                              <td className={`hidden px-2.5 py-2.5 text-right sm:table-cell`}>
+                                {t.category_id ? (
+                                  <span className="flex justify-end">
+                                    <CategoryBadge category={cat} />
+                                  </span>
+                                ) : (
+                                  <span className={headingColor}>None</span>
+                                )}
+                              </td>
                             </tr>
                           );
                         })}
@@ -5919,24 +6041,66 @@ export default function Home() {
               </div>
               <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(260px,300px)]">
                 <div className={panelClass}>
-                  <div className={panelHeaderClass}>Expenses</div>
+                  <div className={`flex flex-wrap items-center justify-between gap-2 border-b ${frameBorder} px-2.5 py-2`}>
+                    <div className={`text-[11px] font-semibold uppercase tracking-[0.55px] ${headingColor}`}>Expenses</div>
+                    <input
+                      type="search"
+                      value={expenseSearch}
+                      onChange={(e) => setExpenseSearch(e.target.value)}
+                      placeholder="Search name…"
+                      className={`w-full max-w-[200px] rounded border ${frameBorder} bg-[var(--mt-panel)] px-2.5 py-1.5 text-sm text-[color:var(--mt-text)] placeholder:opacity-50`}
+                      aria-label="Search expenses by name"
+                    />
+                  </div>
                   <div className="overflow-x-auto">
                     <table className="w-full max-w-full border-collapse text-sm">
-                      <thead className="sticky top-0 z-10">
+                      <thead className="sticky top-0 z-10 bg-[var(--mt-panel)]">
                         <tr className={`${tableHeadRowClass} border-b ${frameBorder}`}>
                           <th className="px-2 py-2 text-left font-normal">Name</th>
                           <th className="px-2 py-2 text-right font-normal">Amount</th>
-                          <th className="px-2 py-2 text-right font-normal">Date</th>
-                          <th className="hidden px-2 py-2 text-right font-normal sm:table-cell">Category</th>
-                          <th className="hidden px-2 py-2 text-right font-normal md:table-cell">Account</th>
+                          <th className="px-2 py-2 text-right font-normal">
+                            <button
+                              type="button"
+                              onClick={() => setExpenseSort((s) => (s === "date-desc" ? "date-asc" : "date-desc"))}
+                              className={`inline-flex items-center gap-1 hover:text-[color:var(--mt-text)] ${expenseSort === "date-desc" || expenseSort === "date-asc" ? "text-[color:var(--mt-text)]" : ""}`}
+                            >
+                              Date
+                              {(expenseSort === "date-desc" || expenseSort === "date-asc") && (
+                                <span className="text-[10px] opacity-70">{expenseSort === "date-desc" ? "↓" : "↑"}</span>
+                              )}
+                            </button>
+                          </th>
+                          <th className="hidden px-2 py-2 text-right font-normal sm:table-cell">
+                            <button
+                              type="button"
+                              onClick={() => setExpenseSort("category")}
+                              className={`inline-flex items-center gap-1 hover:text-[color:var(--mt-text)] ${expenseSort === "category" ? "text-[color:var(--mt-text)]" : ""}`}
+                            >
+                              Category
+                              {expenseSort === "category" && <span className="text-[10px] opacity-70">↓</span>}
+                            </button>
+                          </th>
+                          <th className="hidden px-2 py-2 text-right font-normal md:table-cell">
+                            <button
+                              type="button"
+                              onClick={() => setExpenseSort("account")}
+                              className={`inline-flex items-center gap-1 hover:text-[color:var(--mt-text)] ${expenseSort === "account" ? "text-[color:var(--mt-text)]" : ""}`}
+                            >
+                              Account
+                              {expenseSort === "account" && <span className="text-[10px] opacity-70">↓</span>}
+                            </button>
+                          </th>
                         </tr>
                       </thead>
                       <tbody>
-                        {txInMonth
-                          .filter((t) => t.type === "expense")
-                          .slice()
-                          .sort(compareExpensesNewestFirst)
-                          .map((t, idx) => {
+                        {displayedExpenses.length === 0 ? (
+                          <tr>
+                            <td colSpan={5} className={`px-2 py-6 text-center text-sm ${headingColor}`}>
+                              {expenseSearch.trim() ? "No expenses match your search" : "No expenses this month"}
+                            </td>
+                          </tr>
+                        ) : (
+                          displayedExpenses.map((t, idx) => {
                             const acc = accounts.find((a) => a.id === t.account_id)?.name ?? "—";
                             const cat = categories.find((c) => c.id === t.category_id)?.name ?? "—";
                             return (
@@ -5962,7 +6126,8 @@ export default function Home() {
                                 <td className={`hidden px-2 py-3 align-middle text-right md:table-cell ${itemNameColor}`}>{acc}</td>
                               </tr>
                             );
-                          })}
+                          })
+                        )}
                       </tbody>
                     </table>
                   </div>
